@@ -1,0 +1,28 @@
+{
+  "name": "webstorm-commands",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "bin": {
+    "wsc": "./bin/wsc.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "typecheck": "tsc --noEmit -p jsconfig.json",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "mcp:probe": "node scripts/mcp-probe.js"
+  },
+  "private": true,
+  "dependencies": {
+    "@inquirer/prompts": "^7.10.1",
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}

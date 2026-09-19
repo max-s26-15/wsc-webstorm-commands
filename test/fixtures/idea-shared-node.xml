@@ -1,0 +1,5 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Repro: Stale Job Cleanup" type="NodeJSConfigurationType" path-to-node="$USER_HOME$/.nvm/versions/node/v14.21.3/bin/node" path-to-js-file="$PROJECT_DIR$/api/scripts/reproduce-stale-job-cleanup.js" working-dir="$PROJECT_DIR$/api">
+    <method v="2" />
+  </configuration>
+</component>

@@ -1,0 +1,1011 @@
+<title>wsc Build Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --paper: hsl(210 22% 97%);
+    --surface: hsl(210 20% 92%);
+    --surface-2: hsl(210 20% 100%);
+    --ink: hsl(222 30% 14%);
+    --ink-dim: hsl(222 12% 42%);
+    --ink-faint: hsl(222 10% 55%);
+    --line: hsl(210 15% 83%);
+    --line-soft: hsl(210 15% 89%);
+    --accent: hsl(27 88% 46%);
+    --accent-ink: hsl(30 100% 98%);
+    --accent-soft: hsl(27 88% 46% / 0.12);
+    --accent-2: hsl(199 72% 38%);
+    --accent-2-soft: hsl(199 72% 38% / 0.12);
+    --ok: hsl(152 42% 34%);
+    --ok-soft: hsl(152 42% 34% / 0.12);
+    --risk: hsl(4 65% 48%);
+    --risk-soft: hsl(4 65% 48% / 0.1);
+    --code-ink: hsl(222 30% 20%);
+    --shadow: 220 30% 20%;
+    --font-display: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+    --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper: hsl(224 26% 10%);
+      --surface: hsl(224 22% 15%);
+      --surface-2: hsl(224 24% 13%);
+      --ink: hsl(210 28% 92%);
+      --ink-dim: hsl(212 14% 66%);
+      --ink-faint: hsl(212 12% 50%);
+      --line: hsl(224 16% 24%);
+      --line-soft: hsl(224 16% 20%);
+      --accent: hsl(30 92% 58%);
+      --accent-ink: hsl(30 30% 10%);
+      --accent-soft: hsl(30 92% 58% / 0.16);
+      --accent-2: hsl(199 80% 62%);
+      --accent-2-soft: hsl(199 80% 62% / 0.14);
+      --ok: hsl(152 48% 54%);
+      --ok-soft: hsl(152 48% 54% / 0.14);
+      --risk: hsl(4 80% 66%);
+      --risk-soft: hsl(4 80% 66% / 0.14);
+      --code-ink: hsl(210 25% 88%);
+      --shadow: 224 40% 3%;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper: hsl(224 26% 10%);
+    --surface: hsl(224 22% 15%);
+    --surface-2: hsl(224 24% 13%);
+    --ink: hsl(210 28% 92%);
+    --ink-dim: hsl(212 14% 66%);
+    --ink-faint: hsl(212 12% 50%);
+    --line: hsl(224 16% 24%);
+    --line-soft: hsl(224 16% 20%);
+    --accent: hsl(30 92% 58%);
+    --accent-ink: hsl(30 30% 10%);
+    --accent-soft: hsl(30 92% 58% / 0.16);
+    --accent-2: hsl(199 80% 62%);
+    --accent-2-soft: hsl(199 80% 62% / 0.14);
+    --ok: hsl(152 48% 54%);
+    --ok-soft: hsl(152 48% 54% / 0.14);
+    --risk: hsl(4 80% 66%);
+    --risk-soft: hsl(4 80% 66% / 0.14);
+    --code-ink: hsl(210 25% 88%);
+    --shadow: 224 40% 3%;
+  }
+
+  *{ box-sizing: border-box; }
+  html{ scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce){ html{ scroll-behavior: auto; } *{ animation: none !important; transition: none !important; } }
+
+  body{
+    margin:0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a{ color: var(--accent-2); text-decoration-color: hsl(199 72% 38% / 0.35); text-underline-offset: 3px; }
+  a:hover{ text-decoration-color: currentColor; }
+  a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible{
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px;
+  }
+
+  code, kbd{ font-family: var(--font-mono); font-size: 0.88em; }
+  code{
+    background: var(--surface); color: var(--code-ink);
+    padding: 0.1em 0.42em; border-radius: 4px; border: 1px solid var(--line-soft);
+  }
+  pre{
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem 1.1rem; overflow-x: auto;
+    box-shadow: 0 1px 0 hsl(var(--shadow) / 0.04) inset;
+  }
+  pre code{ background: none; border: none; padding: 0; color: var(--code-ink); font-size: 0.85rem; line-height: 1.55; }
+
+  h1,h2,h3,h4{ font-family: var(--font-display); text-wrap: balance; letter-spacing: -0.01em; margin: 0; }
+
+  /* ---------- layout shell ---------- */
+  .shell{
+    display: grid;
+    grid-template-columns: 272px minmax(0,1fr);
+    max-width: 1360px;
+    margin: 0 auto;
+  }
+
+  /* ---------- sidebar (tab rail) ---------- */
+  .rail{
+    position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow-y: auto;
+    padding: 1.5rem 0.9rem 2rem;
+    border-right: 1px solid var(--line);
+    scrollbar-width: thin;
+  }
+  .rail-brand{ display:flex; align-items:baseline; gap:0.5rem; padding: 0.3rem 0.7rem 1.1rem; }
+  .rail-brand .mark{ font-family: var(--font-display); font-weight:800; font-size:1.05rem; }
+  .rail-brand .ver{ font-family: var(--font-mono); font-size:0.72rem; color: var(--ink-faint); }
+
+  .progress-box{
+    margin: 0 0.2rem 1.2rem; padding: 0.75rem 0.85rem;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .progress-box .label{ font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color: var(--ink-dim); font-family: var(--font-mono); }
+  .progress-box .count{ font-family: var(--font-display); font-weight:700; font-size:1.15rem; margin-top:0.15rem; }
+  .progress-track{ height:6px; border-radius:4px; background: var(--line-soft); margin-top:0.55rem; overflow:hidden; }
+  .progress-fill{ height:100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); width:0%; transition: width 0.35s ease; }
+
+  .rail-group-label{
+    font-family: var(--font-mono); font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em;
+    color: var(--ink-faint); padding: 0.9rem 0.7rem 0.35rem;
+  }
+
+  .tab-item{
+    display:flex; align-items:center; gap:0.55rem;
+    padding: 0.5rem 0.7rem; margin: 1px 0;
+    border-radius: 8px 8px 0 0;
+    border-left: 2.5px solid transparent;
+    color: var(--ink-dim);
+    text-decoration:none;
+    font-size: 0.87rem;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .tab-item .n{ font-family: var(--font-mono); font-size:0.72rem; color: var(--ink-faint); min-width:1.3em; }
+  .tab-item:hover{ background: var(--surface); color: var(--ink); }
+  .tab-item.active{
+    background: var(--surface-2); color: var(--ink); border-left-color: var(--accent);
+    box-shadow: 0 1px 0 var(--line), 0 -1px 0 var(--line), 1px 0 0 var(--line);
+    font-weight: 600;
+  }
+  .tab-item.active .n{ color: var(--accent); }
+
+  /* ---------- main ---------- */
+  main{ min-width:0; padding: 2.6rem clamp(1.2rem, 4vw, 3.4rem) 6rem; }
+
+  .doc-header{ margin-bottom: 2.6rem; padding-bottom: 1.8rem; border-bottom: 1px solid var(--line); }
+  .eyebrow{
+    font-family: var(--font-mono); font-size:0.76rem; text-transform:uppercase; letter-spacing:0.1em;
+    color: var(--accent); margin-bottom:0.6rem; display:block;
+  }
+  .doc-header h1{ font-size: clamp(1.7rem, 3vw, 2.3rem); }
+  .doc-header .sub{ color: var(--ink-dim); max-width:62ch; margin-top:0.9rem; font-size:1.02rem; }
+  .meta-row{ display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:1.3rem; }
+  .meta-chip{
+    font-family: var(--font-mono); font-size:0.76rem; padding:0.3rem 0.6rem;
+    border:1px solid var(--line); border-radius:6px; color: var(--ink-dim); background: var(--surface);
+  }
+
+  section.phase{ margin-bottom: 3.6rem; scroll-margin-top: 1.5rem; max-width: 76ch; }
+  section.ref{ margin-bottom: 3.6rem; scroll-margin-top: 1.5rem; }
+
+  .phase-tabstrip{ display:flex; align-items:flex-end; gap:0.3rem; margin-bottom:0; }
+  .phase-tabstrip .stub{
+    font-family: var(--font-mono); font-size:0.74rem; color: var(--ink-faint);
+    background: var(--surface); border:1px solid var(--line); border-bottom:none;
+    padding: 0.32rem 0.7rem; border-radius: 7px 7px 0 0;
+  }
+  .phase-card{
+    border:1px solid var(--line); border-radius: 0 10px 10px 10px;
+    background: var(--surface-2); padding: 1.6rem 1.7rem 1.8rem;
+  }
+  .phase-card h2{ font-size:1.32rem; margin-bottom:0.5rem; }
+  .phase-goal{ color: var(--ink-dim); margin: 0.4rem 0 1.2rem; }
+
+  .pill-row{ display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:1.2rem; }
+  .pill{
+    font-family: var(--font-mono); font-size:0.72rem; padding:0.22rem 0.55rem;
+    border-radius: 5px; font-weight:600; letter-spacing:0.01em;
+    display:inline-flex; align-items:center; gap:0.35rem;
+  }
+  .pill::before{ content:""; width:6px; height:6px; border-radius:50%; background: currentColor; }
+  .pill.manual{ background: var(--accent-soft); color: var(--accent); }
+  .pill.agent-infra{ background: var(--accent-2-soft); color: var(--accent-2); }
+  .pill.agent-review{ background: var(--ok-soft); color: var(--ok); }
+
+  h3.block-h{ font-family: var(--font-mono); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color: var(--ink-dim); margin: 1.5rem 0 0.7rem; }
+  .phase-card > h3.block-h:first-of-type{ margin-top: 0; }
+
+  ul.filelist{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:0.4rem; }
+  ul.filelist li{ display:grid; grid-template-columns: minmax(0,auto) 1fr; gap:0.9rem; align-items:baseline; font-size:0.92rem; }
+  ul.filelist code{ white-space:nowrap; }
+  ul.filelist .purpose{ color: var(--ink-dim); }
+
+  ol.steps, ul.plain{ padding-left: 1.25rem; margin: 0.4rem 0; }
+  ol.steps li, ul.plain li{ margin-bottom:0.5rem; }
+
+  .checklist{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:0.5rem; }
+  .checklist li{ display:flex; align-items:flex-start; gap:0.6rem; font-size:0.92rem; }
+  .checklist input[type="checkbox"]{
+    appearance:none; width:17px; height:17px; margin-top:0.18rem; flex:none;
+    border:1.5px solid var(--line); border-radius:4px; background: var(--surface-2);
+    cursor:pointer; position:relative; transition: background 0.12s, border-color 0.12s;
+  }
+  .checklist input[type="checkbox"]:checked{ background: var(--ok); border-color: var(--ok); }
+  .checklist input[type="checkbox"]:checked::after{
+    content:""; position:absolute; left:5px; top:1px; width:4px; height:9px;
+    border: solid white; border-width: 0 2px 2px 0; transform: rotate(40deg);
+  }
+  .checklist label{ cursor:pointer; }
+  .checklist input:checked + label{ color: var(--ink-dim); text-decoration: line-through; text-decoration-color: var(--line); }
+
+  table{ width:100%; border-collapse: collapse; font-size:0.87rem; }
+  th, td{ text-align:left; padding: 0.55rem 0.8rem; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+  th{ font-family: var(--font-mono); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color: var(--ink-dim); font-weight:600; }
+  td code{ font-size:0.82em; }
+  .table-wrap{ overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+  .table-wrap table{ min-width: 560px; }
+  .table-wrap th:first-child, .table-wrap td:first-child{ padding-left:1rem; }
+
+  .sev{ display:inline-flex; align-items:center; gap:0.4rem; font-family: var(--font-mono); font-size:0.76rem; font-weight:600; padding: 0.15rem 0.5rem; border-radius:5px; }
+  .sev.high{ background: var(--risk-soft); color: var(--risk); }
+  .sev.med{ background: var(--accent-soft); color: var(--accent); }
+  .sev.low{ background: var(--accent-2-soft); color: var(--accent-2); }
+
+  .callout{ border-left: 3px solid var(--accent-2); background: var(--accent-2-soft); padding: 0.8rem 1rem; border-radius: 0 8px 8px 0; font-size:0.9rem; margin: 1rem 0; }
+  .callout strong{ color: var(--accent-2); }
+
+  footer.doc-footer{ max-width:76ch; margin-top: 4rem; padding-top:1.5rem; border-top:1px solid var(--line); color: var(--ink-faint); font-size:0.85rem; }
+
+  @media (max-width: 900px){
+    .shell{ grid-template-columns: 1fr; }
+    .rail{ position: static; height:auto; border-right:none; border-bottom:1px solid var(--line); display:flex; flex-wrap:nowrap; overflow-x:auto; padding: 0.9rem; gap:0.2rem; }
+    .rail-brand, .progress-box, .rail-group-label{ display:none; }
+    .tab-item{ flex:none; border-radius:8px; border-left:none; border-bottom:2.5px solid transparent; }
+    .tab-item.active{ box-shadow:none; border-bottom-color: var(--accent); background: var(--surface); }
+    main{ padding: 1.8rem 1.1rem 4rem; }
+  }
+</style>
+
+<div class="shell">
+  <nav class="rail" id="rail">
+    <div class="rail-brand"><span class="mark">wsc</span><span class="ver">build plan · v1</span></div>
+
+    <div class="progress-box">
+      <div class="label">Виконано</div>
+      <div class="count" id="progress-count">0 / 0</div>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    </div>
+
+    <div class="rail-group-label">Фази</div>
+    <a class="tab-item" data-target="ov"><span class="n">·</span>Огляд</a>
+    <a class="tab-item" data-target="p0"><span class="n">00</span>Передумови</a>
+    <a class="tab-item" data-target="p1"><span class="n">01</span>Каркас проєкту</a>
+    <a class="tab-item" data-target="p2"><span class="n">02</span>MCP-клієнт</a>
+    <a class="tab-item" data-target="p3"><span class="n">03</span>Резолвер і дані</a>
+    <a class="tab-item" data-target="p4"><span class="n">04</span>Пресети</a>
+    <a class="tab-item" data-target="p5"><span class="n">05</span>Екран --configure</a>
+    <a class="tab-item" data-target="p6"><span class="n">06</span>Виконання через MCP</a>
+    <a class="tab-item" data-target="p7"><span class="n">07</span>MCP недоступний</a>
+    <a class="tab-item" data-target="p8"><span class="n">08</span>Термінал-fallback</a>
+    <a class="tab-item" data-target="p9"><span class="n">09</span>Збірка CLI</a>
+    <a class="tab-item" data-target="p10"><span class="n">10</span>Тести й приймання</a>
+
+    <div class="rail-group-label">Довідник</div>
+    <a class="tab-item" data-target="ref-mcp"><span class="n">→</span>MCP-інструменти</a>
+    <a class="tab-item" data-target="ref-schema"><span class="n">→</span>Схеми даних</a>
+    <a class="tab-item" data-target="ref-deps"><span class="n">→</span>Залежності</a>
+    <a class="tab-item" data-target="ref-risks"><span class="n">→</span>Ризики</a>
+    <a class="tab-item" data-target="ref-agents"><span class="n">→</span>Роль агентів</a>
+  </nav>
+
+  <main>
+    <header class="doc-header" id="ov">
+      <span class="eyebrow">План реалізації</span>
+      <h1>wsc — запуск WebStorm-команд одним викликом</h1>
+      <p class="sub">CLI, що читає run-конфігурації WebStorm через вбудований MCP Server і запускає обраний набір
+        одночасно — кожна команда у власній вкладці Run/Debug або Terminal, з ручним fallback на локальний
+        термінал, якщо MCP вимкнено. План розрахований на ручну розробку: кожна фаза — контракт і перевірка,
+        а не готовий код.</p>
+      <div class="meta-row">
+        <span class="meta-chip">Node ≥ 18, ESM</span>
+        <span class="meta-chip">11 фаз</span>
+        <span class="meta-chip">2 залежності</span>
+        <span class="meta-chip">Тести в кожній фазі</span>
+        <span class="meta-chip">Тестовий проєкт: demo-app</span>
+      </div>
+    </header>
+
+    <section class="ref" style="margin-bottom:3rem;">
+      <h3 class="block-h">Як читати план</h3>
+      <p style="color:var(--ink-dim); max-width:70ch;">Кожна фаза має рядок міток: хто її виконує і чим можуть
+        допомогти агенти. Розділ «Роль агентів» у довіднику — той самий список одним поглядом. Чекбокси
+        зберігаються у браузері (localStorage) — прогрес не зникне між сесіями, але живе лише в цій вкладці
+        браузера.</p>
+      <div class="callout"><strong>Правило кожної фази:</strong> фаза вважається закритою тільки тоді, коли для
+        написаного в ній коду є юніт-тести і вони проходять — не одним «здавальним» прогоном наприкінці (фаза 10),
+        а одразу поряд із кодом. Тому в кожній фазі нижче є окремий файл <code>test/*.test.js</code> у списку
+        файлів і пункт «тести написані й проходять» у переліку перевірки. Код, який важко юніт-тестувати напряму
+        (жива IDE, інтерактивний <code>@inquirer/prompts</code>-UI, реальний spawn термінала), навмисно
+        розбивається на чисту логіку (яка тестується) і тонку обгортку з побічними ефектами (яка перевіряється
+        руками за чеклистом).</div>
+      <div class="pill-row" style="margin-top:0.9rem;">
+        <span class="pill manual">Пишеш ти</span>
+        <span class="pill agent-infra">Агент: інфраструктура</span>
+        <span class="pill agent-review">Агент: рев'ю</span>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 0 ================= -->
+    <section class="phase" id="p0">
+      <div class="phase-tabstrip"><span class="stub">00 · передумови</span></div>
+      <div class="phase-card">
+        <h2>Передумови середовища</h2>
+        <p class="phase-goal">Без цього кроку решта плану технічно неможлива — MCP Server вимкнений за
+          замовчуванням, а без нього немає окремих вкладок.</p>
+        <div class="pill-row"><span class="pill manual">Пишеш ти</span></div>
+
+        <h3 class="block-h">Дії</h3>
+        <ol class="steps">
+          <li>WebStorm → <code>Settings → Tools → MCP Server</code> → увімкнути <code>Enable MCP Server</code>.</li>
+          <li>Там само увімкнути <code>Run shell commands or run configurations without confirmation (Brave Mode)</code> —
+            інакше кожен запуск чекатиме підтвердження в UI.</li>
+          <li>Прочитати фактичний порт прямо з цього ж екрана Settings — він показаний у вигляді посилань
+            <code>http://127.0.0.1:&lt;port&gt;/sse</code> і <code>/stream</code>. Порт <b>не</b> з якогось
+            передбачуваного діапазону (у нашому випадку — <code>64542</code>) і <b>ніде не зберігається у файлі</b>,
+            який CLI міг би прочитати — перевірено: <code>mcpServer.xml</code> містить лише
+            <code>enableMcpServer</code>/<code>enableBraveMode</code>, без порту.</li>
+          <li><b>Зафіксувати порт</b>, щоб CLI не вгадувало його щоразу: <code>Help → Edit Custom VM Options</code> →
+            додати рядок <code>-Didea.mcp.server.force.port=&lt;обраний порт&gt;</code> → перезапустити WebStorm.
+            Після цього порт стабільний і його можна прописати в конфігу CLI (фаза 2) замість сканування.</li>
+          <li>Перевірити наявність термінал-емулятора для fallback-шляху: <code>command -v gnome-terminal</code>
+            (на цій машині вже є).</li>
+        </ol>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p0-1" id="p0-1"><label for="p0-1">MCP Server увімкнено, Brave Mode увімкнено</label></li>
+          <li><input type="checkbox" data-key="p0-2" id="p0-2"><label for="p0-2">Фактичний порт зчитано з Settings → Tools → MCP Server (не зі здогадки)</label></li>
+          <li><input type="checkbox" data-key="p0-3" id="p0-3"><label for="p0-3"><code>-Didea.mcp.server.force.port</code> додано у Custom VM Options, IDE перезапущено, порт після рестарту той самий</label></li>
+          <li><input type="checkbox" data-key="p0-4" id="p0-4"><label for="p0-4">Термінал-емулятор для fallback визначено</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 1 ================= -->
+    <section class="phase" id="p1">
+      <div class="phase-tabstrip"><span class="stub">01 · каркас</span></div>
+      <div class="phase-card">
+        <h2>Каркас проєкту</h2>
+        <p class="phase-goal">Живий <code>wsc --help</code> з коробки — фундамент, на якому будуються всі наступні
+          фази. Без бізнес-логіки.</p>
+        <div class="pill-row">
+          <span class="pill manual">Пишеш ти</span>
+          <span class="pill agent-infra">Агент: package.json + npm-скрипти</span>
+        </div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>package.json</code><span class="purpose">оновити: <code>"type":"module"</code>, <code>bin.wsc</code>, <code>engines.node ">=18"</code>, <code>scripts.test</code></span></li>
+          <li><code>bin/wsc.js</code><span class="purpose">shebang-ентрипойнт, викликає <code>runCli(process.argv.slice(2))</code></span></li>
+          <li><code>src/cli.js</code><span class="purpose">поки заглушка: парсить <code>--help</code>/<code>--version</code></span></li>
+          <li><code>src/log.js</code><span class="purpose">рівні логування, повага до <code>NO_COLOR</code> і не-TTY</span></li>
+          <li><code>test/cli.test.js</code><span class="purpose">юніт-тести: <code>runCli</code> на <code>--help</code>/<code>--version</code>/невідомому прапорці повертає очікуваний exit code, без реального <code>process.exit</code></span></li>
+        </ul>
+
+        <h3 class="block-h">Контракт</h3>
+        <pre><code>// src/cli.js
+export async function runCli(argv: string[]): Promise&lt;number&gt; // повертає exit code
+// bin/wsc.js викликає runCli і робить process.exit(code)</code></pre>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p1-1" id="p1-1"><label for="p1-1"><code>npm link</code> → <code>wsc --help</code> працює з будь-якої теки</label></li>
+          <li><input type="checkbox" data-key="p1-2" id="p1-2"><label for="p1-2">Ненульовий exit code на невідомому прапорці</label></li>
+          <li><input type="checkbox" data-key="p1-3" id="p1-3"><label for="p1-3"><code>test/cli.test.js</code> написаний і проходить (<code>node --test test/cli.test.js</code>)</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 2 ================= -->
+    <section class="phase" id="p2">
+      <div class="phase-tabstrip"><span class="stub">02 · mcp-клієнт</span></div>
+      <div class="phase-card">
+        <h2>MCP-клієнт: виявлення й підключення</h2>
+        <p class="phase-goal">Найризикованіша частина проєкту — тут CLI вперше говорить із живою IDE. Зробити
+          окремо від усього іншого й перевірити руками на реальному <code>demo-app</code>, перш ніж будувати
+          щось поверх.</p>
+        <div class="pill-row"><span class="pill manual">Пишеш ти — тут найважливіше не делегувати</span></div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/mcp/discovery.js</code><span class="purpose">порт бере з <code>WSC_MCP_PORT</code> / <code>--mcp-port</code> (той, що зафіксований у фазі 0 через <code>force.port</code>); скан діапазону — лише best-effort fallback, не основний шлях</span></li>
+          <li><code>src/mcp/client.js</code><span class="purpose">обгортка над <code>@modelcontextprotocol/sdk</code>: connect + typed <code>callTool</code></span></li>
+          <li><code>scripts/mcp-probe.js</code><span class="purpose">ручний скрипт для цієї фази — не частина CLI, викинути або лишити в <code>scripts/</code> як діагностику</span></li>
+          <li><code>test/discovery.test.js</code><span class="purpose">юніт-тести <code>discoverPort()</code> проти фейкового HTTP-сервера в тесті (порт відповідає/не відповідає/відповідає не-MCP) — без живої IDE</span></li>
+        </ul>
+
+        <h3 class="block-h">Контракт</h3>
+        <pre><code>// src/mcp/discovery.js
+export async function discoverPort(opts?: {
+  explicitPort?: number,            // з WSC_MCP_PORT env або --mcp-port
+  fallbackRange?: [number, number], // best-effort скан, якщо explicitPort не задано — ненадійно, лише останній шанс
+}): Promise&lt;number | null&gt;
+
+// src/mcp/client.js
+export async function connectMcp(port: number): Promise&lt;McpClient&gt;
+export interface McpClient {
+  callTool(name: string, args: object): Promise&lt;unknown&gt;
+  close(): Promise&lt;void&gt;
+}</code></pre>
+        <p style="color:var(--ink-dim); font-size:0.9rem;">Транспорт — <code>StreamableHTTPClientTransport</code> з
+          SDK, база <code>http://127.0.0.1:&lt;port&gt;</code> (підтверджені шляхи <code>/sse</code> і
+          <code>/stream</code>). Обов'язково викликати <code>initialize</code> перед першим <code>tools/call</code> —
+          SDK робить це сам при <code>client.connect(transport)</code>.</p>
+        <div class="callout"><strong>Чому не сканування діапазону:</strong> порт ніде не публікується файлом
+          (перевірено — <code>mcpServer.xml</code> зберігає лише <code>enableMcpServer</code>/<code>enableBraveMode</code>),
+          і реальне значення на цій машині — <code>64542</code>, поза «типовим» діапазоном 64342+. Без
+          зафіксованого через <code>force.port</code> порту з фази 0 CLI довелося б сканувати сотні портів
+          навмання — тому явний порт (env/конфіг) є основним шляхом, а скан лишається лише деградованим
+          fallback.</div>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p2-1" id="p2-1"><label for="p2-1"><code>node scripts/mcp-probe.js</code> у слаксьюті виводить сирий результат <code>get_run_configurations</code></label></li>
+          <li><input type="checkbox" data-key="p2-2" id="p2-2"><label for="p2-2">Список збігається з 13 записами з випадайки WebStorm (скрін 1)</label></li>
+          <li><input type="checkbox" data-key="p2-3" id="p2-3"><label for="p2-3">Вимкнути MCP Server в Settings → <code>discoverPort</code> коректно повертає <code>null</code>, а не висить/кидає невиразну помилку</label></li>
+          <li><input type="checkbox" data-key="p2-5" id="p2-5"><label for="p2-5"><code>WSC_MCP_PORT=64542</code> (реальний порт із фази 0) → <code>discoverPort()</code> одразу підключається, без сканування</label></li>
+          <li><input type="checkbox" data-key="p2-4" id="p2-4"><label for="p2-4"><code>test/discovery.test.js</code> написаний і проходить без запущеної IDE</label></li>
+        </ul>
+
+        <div class="callout"><strong>Збережи сирий JSON-результат</strong> <code>get_run_configurations</code> зі
+          demo-app в <code>test/fixtures/run-configurations.json</code> — він знадобиться як мок-дані для фаз 3–6,
+          щоб не тримати живу IDE запущеною під час тестів.</div>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 3 ================= -->
+    <section class="phase" id="p3">
+      <div class="phase-tabstrip"><span class="stub">03 · резолвер</span></div>
+      <div class="phase-card">
+        <h2>Нормалізація даних і резолвер імен</h2>
+        <p class="phase-goal">Чисті функції без побічних ефектів — і тому найзручніше місце для юніт-тестів на
+          справжніх даних.</p>
+        <div class="pill-row">
+          <span class="pill manual">Пишеш ти</span>
+          <span class="pill agent-review">Агент: рев'ю edge-кейсів парсингу</span>
+        </div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/args.js</code><span class="purpose"><code>node:util.parseArgs</code>-обгортка + парсинг позиційних <code>name[:run|:debug]</code></span></li>
+          <li><code>src/resolve.js</code><span class="purpose">пошук конфігурації за іменем, злиття пресету з CLI-аргументами</span></li>
+          <li><code>test/fixtures/run-configurations.json</code><span class="purpose">збережено з фази 2</span></li>
+          <li><code>test/args.test.js</code><span class="purpose">юніт-тести <code>splitNameMode</code> на іменах із двокрапками (<code>api &gt; repro:stale-job:debug</code> тощо)</span></li>
+          <li><code>test/resolve.test.js</code><span class="purpose">юніт-тести резолву на фікстурі з 13 реальних конфігурацій</span></li>
+        </ul>
+
+        <h3 class="block-h">Ключове правило парсингу</h3>
+        <p>Розділяти <code>name:mode</code> по <b>останньому</b> <code>:</code> — і тільки якщо суфікс дорівнює
+          <code>run</code> чи <code>debug</code>. Причина: самі імена містять двокрапки, напр.
+          <code>client &gt; bundle:build</code> — без цього правила резолвер відріже не той шматок.</p>
+        <div class="callout"><strong>Але самого правила недостатньо.</strong> У demo-app є конфігурація
+          <code>api &gt; repro:stale-job:debug</code>, суфікс якої <em>дорівнює</em> <code>debug</code> —
+          синтаксичне правило розрізало б її навпіл. Розв'язати це можна лише даними: спершу перевіряємо, чи
+          весь токен збігається з іменем, яке повернула IDE (<code>isKnownName</code>), і лише якщо ні —
+          пробуємо різати. Без списку імен <code>splitNameMode</code> деградує передбачувано; це задокументовано
+          й закріплено тестом.</div>
+        <pre><code>splitNameMode("web:debug")
+// → { name: "web", mode: "debug" }
+
+splitNameMode("client > bundle:build")
+// → { name: "client > bundle:build", mode: "run" }        // суфікс не run/debug
+
+splitNameMode("api > repro:stale-job:debug", { isKnownName })
+// → { name: "api > repro:stale-job:debug", mode: "run" }   // це саме ім'я з IDE
+
+splitNameMode("api > repro:stale-job:debug:debug", { isKnownName })
+// → { name: "api > repro:stale-job:debug", mode: "debug" } // подвоєний суфікс = вихід</code></pre>
+
+        <h3 class="block-h">Резолв імені</h3>
+        <ol class="steps">
+          <li>Точний збіг (case-sensitive)</li>
+          <li>Case-insensitive збіг</li>
+          <li>Префіксний збіг — <b>лише якщо кандидат один</b>; <code>addon</code> у demo-app
+            підходить трьом конфігураціям, тому це помилка зі списком, а не здогадка</li>
+          <li>Інакше — помилка з «Did you mean …» (Левенштейн по всіх іменах) і <b>зупинка до запуску</b> будь-чого</li>
+        </ol>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p3-1" id="p3-1"><label for="p3-1">Тести проходять на фікстурі з реальними 13 конфігураціями</label></li>
+          <li><input type="checkbox" data-key="p3-2" id="p3-2"><label for="p3-2">Невідоме ім'я не запускає жодного процесу — падає одразу</label></li>
+          <li><input type="checkbox" data-key="p3-3" id="p3-3"><label for="p3-3"><code>wsc web:debug "client > bundle:build"</code> резолвиться коректно вручну (console.log, ще без execute)</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 4 ================= -->
+    <section class="phase" id="p4">
+      <div class="phase-tabstrip"><span class="stub">04 · пресети</span></div>
+      <div class="phase-card">
+        <h2>Пресети</h2>
+        <p class="phase-goal">Постійне сховище того, який набір команд і в якому режимі запускається за
+          замовчуванням.</p>
+        <div class="pill-row">
+          <span class="pill manual">Пишеш ти — включно з тест-кейсами</span>
+          <span class="pill agent-infra">Агент: лише механічний boilerplate tmp-директорій для тестів</span>
+        </div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/presets/store.js</code><span class="purpose">читання/запис <code>.idea/webstorm-commands.json</code>, атомарно (tmp + rename)</span></li>
+          <li><code>test/presets.test.js</code><span class="purpose">юніт-тести читання/запису/міграції на tmp-директорії; агент готує лише setup/teardown-boilerplate, самі кейси — твої</span></li>
+        </ul>
+
+        <h3 class="block-h">Схема (детально — у розділі «Схеми даних»)</h3>
+        <pre><code>{
+  "version": 1,
+  "defaultPreset": "default",
+  "presets": {
+    "default": [
+      { "name": "web", "mode": "debug" },
+      { "name": "api", "mode": "run" }
+    ]
+  }
+}</code></pre>
+        <p style="color:var(--ink-dim); font-size:0.9rem;">Файл лежить у <code>.idea/</code>, але це <b>не</b>
+          файл IDE — вона його не чіпає. Можна комітити для команди або додати в <code>.gitignore</code>, якщо
+          набір суто персональний.</p>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p4-1" id="p4-1"><label for="p4-1">Запис і читання зберігають форматування, не труть невідомі поля</label></li>
+          <li><input type="checkbox" data-key="p4-2" id="p4-2"><label for="p4-2">Переривання процесу під час запису не лишає файл пошкодженим (перевірити вручну <code>kill -9</code> під час запису великого пресету)</label></li>
+          <li><input type="checkbox" data-key="p4-3" id="p4-3"><label for="p4-3"><code>test/presets.test.js</code> написаний і проходить</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 5 ================= -->
+    <section class="phase" id="p5">
+      <div class="phase-tabstrip"><span class="stub">05 · configure</span></div>
+      <div class="phase-card">
+        <h2>Інтерактивний екран --configure</h2>
+        <p class="phase-goal">UX-екран, що відтворює випадайку WebStorm: спершу «що вмикаємо», потім «у якому
+          режимі».</p>
+        <div class="pill-row"><span class="pill manual">Пишеш ти</span></div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/ui/configureLogic.js</code><span class="purpose">чиста логіка без побічних ефектів: <code>buildInitialSelection(runConfigs, preset)</code>, <code>applyAnswersToPreset(selection, modes)</code></span></li>
+          <li><code>src/ui/configure.js</code><span class="purpose">тонка обгортка: <code>@inquirer/prompts</code> (checkbox → select режиму) викликає функції з <code>configureLogic.js</code></span></li>
+          <li><code>test/configureLogic.test.js</code><span class="purpose">юніт-тести чистих функцій — сам інтерактивний prompt лишається під ручну перевірку нижче, бо мокати terminal UI недоцільно</span></li>
+        </ul>
+
+        <h3 class="block-h">Потік</h3>
+        <ol class="steps">
+          <li><code>checkbox</code> зі списком усіх конфігурацій (з MCP), позначені = поточний пресет</li>
+          <li>Для кожної щойно позначеної — короткий <code>select</code>: <code>run</code> / <code>debug</code> (дефолт <code>run</code>)</li>
+          <li>Запис через <code>presets/store.js</code>, підсумок у консоль</li>
+          <li>Не-TTY (пайп, CI) → зрозуміла помилка замість зависання</li>
+        </ol>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p5-1" id="p5-1"><label for="p5-1"><code>wsc -c</code> у demo-app показує ті самі 13 пунктів</label></li>
+          <li><input type="checkbox" data-key="p5-2" id="p5-2"><label for="p5-2">Повторний запуск <code>-c</code> показує раніше збережений вибір позначеним</label></li>
+          <li><input type="checkbox" data-key="p5-3" id="p5-3"><label for="p5-3"><code>test/configureLogic.test.js</code> написаний і проходить</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 6 ================= -->
+    <section class="phase" id="p6">
+      <div class="phase-tabstrip"><span class="stub">06 · виконання</span></div>
+      <div class="phase-card">
+        <h2>Виконання через MCP — основний шлях</h2>
+        <p class="phase-goal">Ядро продукту: перетворити резолвлений список <code>{name, mode}[]</code> на
+          виклики MCP, які реально відкривають вкладки.</p>
+        <div class="pill-row"><span class="pill manual">Пишеш ти — тут уся цінність проєкту</span></div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/mcp/execute.js</code><span class="purpose">обгортки над <code>execute_run_configuration</code> і <code>execute_terminal_command</code></span></li>
+          <li><code>src/exec/planBuilder.js</code><span class="purpose">резолвлений список → список викликів MCP з урахуванням обраного режиму виконання (термінал/run-config)</span></li>
+          <li><code>test/planBuilder.test.js</code><span class="purpose">юніт-тести на фікстурі з фази 2: правильний вибір інструмента (run-config/terminal), правильна побудова debug-команди, без жодного реального виклику MCP (мок-клієнт)</span></li>
+        </ul>
+
+        <h3 class="block-h">Два способи запуску одної конфігурації</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Спосіб</th><th>Виклик</th><th>Де з'являється вкладка</th></tr></thead>
+            <tbody>
+              <tr><td>Run/Debug tool window</td><td><code>execute_run_configuration({ configurationName })</code></td><td>Нативна вкладка з іменем конфігурації — IDE сама її створює/перевикористовує</td></tr>
+              <tr><td>Terminal tool window</td><td><code>execute_terminal_command({ command, reuseExistingTerminalWindow: false })</code></td><td>Нова вкладка Terminal на кожен виклик</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="color:var(--ink-dim); font-size:0.9rem;">Для <code>debug</code>-режиму в терміналі команда, яку
+          передаєш у <code>execute_terminal_command</code>, має включати <code>--inspect-brk</code> (через
+          <code>NODE_OPTIONS</code>) або запускати альтернативний debug-скрипт, якщо він є в
+          <code>get_run_configurations</code> (у demo-app такі вже готові:
+          <code>api &gt; repro:stale-job:debug</code>, <code>mailer &gt; debug:log</code>).</p>
+
+        <h3 class="block-h">Контракт</h3>
+        <pre><code>// src/exec/planBuilder.js
+export function buildExecutionPlan(
+  resolved: { name: string, mode: "run"|"debug" }[],
+  runConfigs: RunConfigInfo[],       // з get_run_configurations
+  target: "run-window" | "terminal"
+): McpCall[]</code></pre>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p6-1" id="p6-1"><label for="p6-1"><code>wsc web api</code> відкриває дві окремі вкладки в Run tool window demo-app</label></li>
+          <li><input type="checkbox" data-key="p6-2" id="p6-2"><label for="p6-2"><code>wsc --target=terminal web api</code> відкриває дві окремі вкладки в Terminal tool window</label></li>
+          <li><input type="checkbox" data-key="p6-3" id="p6-3"><label for="p6-3"><code>wsc api:debug</code> — процес стартує з <code>--inspect-brk</code>, брейкпойнт у WebStorm справді ловиться</label></li>
+          <li><input type="checkbox" data-key="p6-4" id="p6-4"><label for="p6-4"><code>test/planBuilder.test.js</code> написаний і проходить</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 7 ================= -->
+    <section class="phase" id="p7">
+      <div class="phase-tabstrip"><span class="stub">07 · mcp недоступний</span></div>
+      <div class="phase-card">
+        <h2>MCP недоступний: retry / fallback</h2>
+        <p class="phase-goal">Точний UX, який ти визначив: повідомлення з двома опціями, не мовчазний фолбек.</p>
+        <div class="pill-row"><span class="pill manual">Пишеш ти</span></div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/ui/mcpUnavailablePrompt.js</code><span class="purpose"><code>select</code> з двома пунктами, виконується коли <code>discoverPort()</code> повернув <code>null</code></span></li>
+          <li><code>test/mcpUnavailablePrompt.test.js</code><span class="purpose">юніт-тести гілки вибору без інтерактивного вводу: <code>resolveFallbackChoice(flags, discoverPort)</code> — коли обходить prompt через <code>--fallback</code>, коли повторює <code>discoverPort()</code> після «retry»</span></li>
+        </ul>
+
+        <h3 class="block-h">Поведінка</h3>
+        <ol class="steps">
+          <li>Повідомлення пояснює причину і точний шлях у Settings (з фази 0)</li>
+          <li><b>«Спробувати ще раз»</b> → повторний <code>discoverPort()</code>, без перезапуску CLI</li>
+          <li><b>«Продовжити без вкладок IDE»</b> → передає керування у фазу 8 (термінал-fallback)</li>
+          <li>Прапорці для неінтерактивних сценаріїв: <code>--fallback=retry</code> / <code>--fallback=terminal</code> обходять prompt</li>
+        </ol>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p7-1" id="p7-1"><label for="p7-1">Вимкнути MCP Server → запустити <code>wsc</code> → бачиш чітке повідомлення з двома опціями, а не стек-трейс</label></li>
+          <li><input type="checkbox" data-key="p7-2" id="p7-2"><label for="p7-2">Увімкнути MCP Server, обрати «спробувати ще раз» без виходу з CLI → запуск проходить основним шляхом</label></li>
+          <li><input type="checkbox" data-key="p7-3" id="p7-3"><label for="p7-3"><code>test/mcpUnavailablePrompt.test.js</code> написаний і проходить</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 8 ================= -->
+    <section class="phase" id="p8">
+      <div class="phase-tabstrip"><span class="stub">08 · термінал-fallback</span></div>
+      <div class="phase-card">
+        <h2>Термінальний fallback (кілька вкладок)</h2>
+        <p class="phase-goal">Коли MCP недоступний — все одно спробувати окремі вкладки, тільки вже
+          термінал-емулятора ОС, а не WebStorm.</p>
+        <div class="pill-row">
+          <span class="pill manual">Пишеш ти — адаптер gnome-terminal</span>
+          <span class="pill agent-infra">Агент: адаптери konsole/macOS/Windows за тим самим інтерфейсом</span>
+        </div>
+
+        <h3 class="block-h">Файли</h3>
+        <ul class="filelist">
+          <li><code>src/fallback/terminalTabs.js</code><span class="purpose">детект емулятора + виклик через <code>spawn</code></span></li>
+          <li><code>src/fallback/singleTabPool.js</code><span class="purpose">останній рубіж: один процес-пул із кольоровими префіксами, як у першій версії плану</span></li>
+          <li><code>test/terminalTabs.test.js</code><span class="purpose">юніт-тести порядку детекту й побудови команди для кожного емулятора з ін'єкованим (фейковим) резолвером <code>PATH</code> — без реального <code>spawn</code></span></li>
+        </ul>
+
+        <h3 class="block-h">Підтверджена команда для gnome-terminal</h3>
+        <pre><code>gnome-terminal \
+  --tab --title="web" -- bash -c "cd web && npm run dev; exec bash" \
+  --tab --title="api"    -- bash -c "cd api && npm run debug; exec bash"</code></pre>
+        <p style="color:var(--ink-dim); font-size:0.9rem;">Кожен <code>--tab</code> — окрема вкладка того самого
+          вікна. <code>exec bash</code> в кінці лишає вкладку відкритою після завершення/падіння процесу, щоб
+          побачити вивід і код виходу.</p>
+
+        <h3 class="block-h">Порядок детекту</h3>
+        <ol class="steps">
+          <li><code>gnome-terminal</code> (підтверджено на цій машині)</li>
+          <li><code>konsole --new-tab</code></li>
+          <li>macOS: <code>osascript</code> → <code>tell application "Terminal" to do script</code></li>
+          <li>Windows: <code>wt</code> (Windows Terminal) з прапорцем <code>new-tab</code></li>
+          <li>Нічого не знайдено → <code>singleTabPool.js</code>, з явним попередженням у консолі, що вкладки об'єднані</li>
+        </ol>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p8-1" id="p8-1"><label for="p8-1">Вимкнений MCP + «продовжити без IDE» → <code>gnome-terminal</code> відкриває дві окремі вкладки з правильним cwd/командою</label></li>
+          <li><input type="checkbox" data-key="p8-2" id="p8-2"><label for="p8-2">Штучно підмінити <code>PATH</code>, щоб жоден емулятор не знайшовся → falls back на один тег-мультиплексований вивід із попередженням</label></li>
+          <li><input type="checkbox" data-key="p8-3" id="p8-3"><label for="p8-3"><code>test/terminalTabs.test.js</code> написаний і проходить</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 9 ================= -->
+    <section class="phase" id="p9">
+      <div class="phase-tabstrip"><span class="stub">09 · збірка cli</span></div>
+      <div class="phase-card">
+        <h2>Збірка CLI, --list, --dry-run, README</h2>
+        <p class="phase-goal">Склеїти всі попередні фази в один зв'язний інтерфейс командного рядка.</p>
+        <div class="pill-row">
+          <span class="pill manual">Пишеш ти</span>
+          <span class="pill agent-infra">Агент: чернетка README за реальними прапорцями</span>
+        </div>
+
+        <h3 class="block-h">Файл</h3>
+        <ul class="filelist">
+          <li><code>test/cli.integration.test.js</code><span class="purpose">юніт-тести всієї таблиці прапорців нижче через ін'єкцію фейкового <code>McpClient</code> у <code>runCli</code> — перевіряють точний текст <code>--dry-run</code> і коди виходу, без живої IDE</span></li>
+        </ul>
+
+        <h3 class="block-h">Фінальний набір прапорців</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Прапорець</th><th>Дія</th></tr></thead>
+            <tbody>
+              <tr><td><code>wsc</code></td><td>запускає пресет за замовчуванням</td></tr>
+              <tr><td><code>wsc web:debug api</code></td><td>пресет + додаткові, CLI перевизначає режим</td></tr>
+              <tr><td><code>-c, --configure</code></td><td>інтерактивний екран вибору</td></tr>
+              <tr><td><code>-l, --list</code></td><td>друк усіх конфігурацій із MCP</td></tr>
+              <tr><td><code>--preset &lt;name&gt;</code></td><td>інший іменований пресет</td></tr>
+              <tr><td><code>--target=run-window|terminal</code></td><td>яким шляхом MCP запускати</td></tr>
+              <tr><td><code>--dry-run</code></td><td>друк точних викликів без запуску</td></tr>
+              <tr><td><code>--fallback=retry|terminal</code></td><td>обхід інтерактивного prompt з фази 7</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="block-h">Перевірка</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p9-1" id="p9-1"><label for="p9-1">Усі прапорці з таблиці працюють у demo-app саме так, як описано</label></li>
+          <li><input type="checkbox" data-key="p9-2" id="p9-2"><label for="p9-2">README містить реальні приклади виводу, не абстрактні</label></li>
+          <li><input type="checkbox" data-key="p9-3" id="p9-3"><label for="p9-3"><code>test/cli.integration.test.js</code> написаний і проходить</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= PHASE 10 ================= -->
+    <section class="phase" id="p10">
+      <div class="phase-tabstrip"><span class="stub">10 · приймання</span></div>
+      <div class="phase-card">
+        <h2>Тести й фінальна перевірка</h2>
+        <p class="phase-goal">До цього моменту кожна фаза вже закривалась власними тестами — фаза 10 не додає
+          новий великий набір, а перевіряє, що весь <code>test/*.test.js</code> досі проходить разом, латає
+          прогалини на стиках між фазами (наприклад, взаємодію <code>resolve.js</code> + <code>planBuilder.js</code>)
+          і фіксує документацію.</p>
+        <div class="pill-row">
+          <span class="pill manual">Пишеш ти</span>
+          <span class="pill agent-review">Агент: повне рев'ю діфа перед першим релізом (<code>/code-review</code>)</span>
+        </div>
+
+        <h3 class="block-h">Дії</h3>
+        <ol class="steps">
+          <li><code>node --test</code> — увесь набір із фаз 1–9 одним прогоном, без пропусків</li>
+          <li>Переглянути покриття вручну: чи лишились гілки без тестів (особливо обробка помилок MCP і
+            edge-кейси резолвера) — дописати, де знайдено прогалину</li>
+          <li>Оновити <code>CLAUDE.md</code>: реальна структура, команди, архітектура MCP-first</li>
+          <li>Запустити <code>/code-review</code> на весь diff перед першим тегом версії</li>
+        </ol>
+
+        <h3 class="block-h">Приймальний чекліст (наскрізний, на demo-app)</h3>
+        <ul class="checklist">
+          <li><input type="checkbox" data-key="p10-1" id="p10-1"><label for="p10-1"><code>wsc --list</code> = 13 записів зі скріна 1</label></li>
+          <li><input type="checkbox" data-key="p10-2" id="p10-2"><label for="p10-2"><code>wsc -c</code> зберігає пресет, повторний запуск його підхоплює</label></li>
+          <li><input type="checkbox" data-key="p10-3" id="p10-3"><label for="p10-3"><code>wsc</code> без аргументів піднімає весь пресет, кожна — своя вкладка Run/Debug</label></li>
+          <li><input type="checkbox" data-key="p10-4" id="p10-4"><label for="p10-4"><code>wsc web:debug api</code> — <code>web</code> у debug, <code>api</code> у run, обидві поверх пресету</label></li>
+          <li><input type="checkbox" data-key="p10-5" id="p10-5"><label for="p10-5">Вимкнений MCP → повідомлення з вибором → термінал-fallback реально відкриває окремі вкладки</label></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= REFERENCE ================= -->
+    <section class="ref" id="ref-mcp">
+      <h3 class="block-h" style="margin-top:0;">Довідник · MCP-інструменти</h3>
+      <p style="color:var(--ink-dim); max-width:70ch; margin-bottom:1rem;">Витягнуто з байткоду
+        <code>mcpserver.jar</code> цієї конкретної інсталяції WebStorm 2026.2.1 (build 262.9437.145) —
+        сигнатури можуть відрізнятись між версіями IDE, тому варто перевірити на своїй перед фазою 2.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Інструмент</th><th>Параметри</th><th>Нотатка</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>get_run_configurations</code></td>
+              <td><code>projectPath</code>, <code>filePath?</code></td>
+              <td>Повертає лише <code>name</code>, <code>description</code> ("npm"/"Node.js") і
+                <code>supportsDynamicLaunchOverrides</code> — <strong>без</strong> <code>workingDirectory</code>/<code>envs</code>,
+                попри те що каже байткод (перевірено на живій IDE)</td>
+            </tr>
+            <tr>
+              <td><code>execute_run_configuration</code></td>
+              <td><code>projectPath, configurationName, waitForExit?, timeout?, programArguments?, workingDirectory?, envs?</code></td>
+              <td>Відкриває/перевикористовує нативну вкладку Run/Debug з іменем конфігурації</td>
+            </tr>
+            <tr>
+              <td><code>execute_terminal_command</code></td>
+              <td><code>projectPath, command, executeInShell, reuseExistingTerminalWindow, timeout, maxLinesCount, truncateMode</code></td>
+              <td><code>reuseExistingTerminalWindow: false</code> → нова вкладка Terminal на кожен виклик. Чекає
+                до <code>timeout</code> мс, збирає вивід — сам процес лишається жити в тлі</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout"><strong><code>projectPath</code> обов'язковий на практиці.</strong> Один MCP-сервер
+        обслуговує <em>усі</em> відкриті вікна IDE. Якщо проєктів більше одного, будь-який виклик без
+        <code>projectPath</code> повертає <code>isError: true</code> зі списком відкритих проєктів — тому
+        <code>McpClient</code> прив'язується до проєкту при створенні й підставляє його в кожен виклик.</div>
+      <div class="callout"><strong>Помилки приходять як успішна відповідь.</strong> Провал інструмента — це
+        <code>{ isError: true, content: [{ type: "text", text: "..." }] }</code>, а не виняток. Без явної перевірки
+        <code>isError</code> CLI сприйме текст помилки за дані.</div>
+      <div class="callout"><strong>Brave Mode</strong> обов'язковий для обох execute-інструментів — без нього
+        кожен виклик показує діалог підтвердження в UI IDE, що ламає одночасний запуск кількох команд.</div>
+    </section>
+
+    <section class="ref" id="ref-schema">
+      <h3 class="block-h">Довідник · Схеми даних</h3>
+      <p class="block-h" style="text-transform:none; letter-spacing:0; font-size:0.85rem; margin-top:1.4rem;">RunConfigInfo (нормалізований результат get_run_configurations)</p>
+      <pre><code>{
+  name: string,                 // "web", "api > repro:stale-job:debug"
+  description: string,          // "npm" | "Node.js" — тип конфігурації, не опис
+  supportsDynamicLaunchOverrides: boolean
+}</code></pre>
+      <p style="color:var(--ink-dim); max-width:70ch;">Реальний результат із demo-app збережено як
+        <code>test/fixtures/run-configurations.json</code> (13 конфігурацій) — мок-дані для фаз 3–9.</p>
+      <p class="block-h" style="text-transform:none; letter-spacing:0; font-size:0.85rem;">Пресет-файл — <code>.idea/webstorm-commands.json</code></p>
+      <pre><code>{
+  "version": 1,
+  "defaultPreset": "default",
+  "presets": {
+    "default": [ { "name": "web", "mode": "debug" } ],
+    "backend": [ { "name": "api", "mode": "run" }, { "name": "mailer", "mode": "run" } ]
+  }
+}</code></pre>
+    </section>
+
+    <section class="ref" id="ref-deps">
+      <h3 class="block-h">Довідник · Залежності</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Пакет</th><th>Навіщо</th></tr></thead>
+          <tbody>
+            <tr><td><code>@modelcontextprotocol/sdk</code></td><td>Клієнт протоколу MCP (JSON-RPC поверх Streamable HTTP, хендшейк <code>initialize</code>, керування сесією) — вручну цей протокол відтворювати ризиковано</td></tr>
+            <tr><td><code>@inquirer/prompts</code></td><td>Екран <code>--configure</code> і prompt "retry / fallback" з фази 7</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="color:var(--ink-dim); font-size:0.88rem; margin-top:1rem;">Свідомо не додано: <code>commander</code>/<code>yargs</code>
+        (<code>node:util.parseArgs</code> вистачає), <code>concurrently</code> (термінал-fallback має власну
+        логіку процес-груп), <code>chalk</code> (кілька ANSI-констант у <code>log.js</code>), будь-який тест-раннер
+        (<code>node:test</code> вбудований).</p>
+    </section>
+
+    <section class="ref" id="ref-risks">
+      <h3 class="block-h">Довідник · Ризики</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Ризик</th><th>Рівень</th><th>Що робити</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Порт MCP-сервера не персистентний і не публікується в жодному конфіг-файлі — реальний порт
+                (<code>64542</code>) навіть поза очікуваним діапазоном 64342+</td>
+              <td><span class="sev high">high</span></td>
+              <td>Не сканувати — фіксувати через <code>-Didea.mcp.server.force.port</code> у фазі 0, читати з
+                <code>WSC_MCP_PORT</code>/<code>--mcp-port</code>; скан лишити тільки як задокументовано ненадійний
+                fallback</td>
+            </tr>
+            <tr>
+              <td>Сигнатури MCP-інструментів зміняться в наступній версії WebStorm</td>
+              <td><span class="sev high">high</span></td>
+              <td>Тримати фазу 2 (<code>mcp-probe.js</code>) як живий діагностичний скрипт, не викидати — перший
+                крок при будь-якому апгрейді IDE</td>
+            </tr>
+            <tr>
+              <td><code>--inspect-brk</code> ламається на обгортках, які самі спавнять node (nodemon, gulp)</td>
+              <td><span class="sev med">med</span></td>
+              <td>Для таких конфігурацій використовувати вже готовий debug-скрипт із <code>get_run_configurations</code>
+                замість інʼєкції прапорця (у demo-app такі вже є)</td>
+            </tr>
+            <tr>
+              <td>Один MCP-сервер обслуговує всі відкриті вікна IDE — виклик без <code>projectPath</code>
+                падає з <code>isError</code>, а з <em>чужим</em> <code>projectPath</code> тихо запустить команду
+                не в тому проєкті</td>
+              <td><span class="sev high">high</span></td>
+              <td><code>McpClient</code> прив'язаний до одного <code>projectPath</code> (корінь проєкту з cwd) і
+                підставляє його в кожен виклик; <code>AmbiguousProjectError</code> несе список відкритих проєктів,
+                щоб фаза 3 показала користувачу вибір замість невиразної помилки</td>
+            </tr>
+            <tr>
+              <td>Термінал-fallback за межами gnome-terminal/konsole/macOS/Windows Terminal не покритий</td>
+              <td><span class="sev low">low</span></td>
+              <td>Деградація до <code>singleTabPool.js</code> з явним попередженням — функціонально працює, просто
+                без окремих вкладок</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="ref" id="ref-agents">
+      <h3 class="block-h">Довідник · Роль агентів</h3>
+      <p style="color:var(--ink-dim); max-width:70ch; margin-bottom:1.1rem;">Ти ведеш розробку сам. Агенти —
+        тільки для двох речей: підготовка інфраструктури (шаблонний, механічний код без бізнес-рішень) і рев'ю
+        після того, як фаза вже написана й перевірена руками.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Фаза</th><th>Де можна агента</th><th>Що саме</th></tr></thead>
+          <tbody>
+            <tr><td>01</td><td><span class="pill agent-infra">інфра</span></td><td><code>package.json</code>, npm-скрипти</td></tr>
+            <tr><td>03</td><td><span class="pill agent-review">рев'ю</span></td><td>Перевірити edge-кейси парсингу імен з двокрапками</td></tr>
+            <tr><td>04</td><td><span class="pill agent-infra">інфра</span></td><td>Каркас тестів на tmp-директоріях для атомарного запису</td></tr>
+            <tr><td>08</td><td><span class="pill agent-infra">інфра</span></td><td>Адаптери konsole/macOS/Windows за вже написаним інтерфейсом gnome-terminal</td></tr>
+            <tr><td>09</td><td><span class="pill agent-infra">інфра</span></td><td>Чернетка README за фактичними прапорцями</td></tr>
+            <tr><td>10</td><td><span class="pill agent-review">рев'ю</span></td><td>Повний <code>/code-review</code> перед першим тегом версії</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      wsc build plan · зафіксовано за результатами дослідження WebStorm 2026.2.1 (build 262.9437.145) та реального
+      проєкту demo-app. Прогрес чекбоксів зберігається лише в цьому браузері.
+    </footer>
+  </main>
+</div>
+
+<script>
+(function(){
+  var STORAGE_KEY = "wsc-plan:v1";
+  var state = {};
+  try {
+    state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch(e) { state = {}; }
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.checklist input[type="checkbox"]'));
+
+  function save(){
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+  }
+
+  function updateProgress(){
+    var total = boxes.length, done = 0;
+    boxes.forEach(function(b){ if (b.checked) done++; });
+    var countEl = document.getElementById('progress-count');
+    var fillEl = document.getElementById('progress-fill');
+    if (countEl) countEl.textContent = done + " / " + total;
+    if (fillEl) fillEl.style.width = (total ? (done/total*100) : 0) + "%";
+  }
+
+  boxes.forEach(function(box){
+    var key = box.getAttribute('data-key');
+    if (state[key]) box.checked = true;
+    box.addEventListener('change', function(){
+      state[key] = box.checked;
+      save();
+      updateProgress();
+    });
+  });
+  updateProgress();
+
+  // sidebar scroll-spy + click nav
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab-item'));
+  var targets = tabs.map(function(t){ return document.getElementById(t.getAttribute('data-target')); });
+
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(e){
+      e.preventDefault();
+      var el = document.getElementById(tab.getAttribute('data-target'));
+      if (el) el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    });
+  });
+
+  var byId = {};
+  tabs.forEach(function(t){ byId[t.getAttribute('data-target')] = t; });
+
+  if ('IntersectionObserver' in window) {
+    var observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) {
+          tabs.forEach(function(t){ t.classList.remove('active'); });
+          var match = byId[entry.target.id];
+          if (match) match.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-10% 0px -75% 0px', threshold: 0 });
+    targets.forEach(function(el){ if (el) observer.observe(el); });
+  }
+})();
+</script>

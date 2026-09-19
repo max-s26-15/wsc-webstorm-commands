@@ -1,0 +1,238 @@
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+
+import { normalizeRunConfigs } from '../src/resolve.js';
+import {
+    DEFAULT_MODE,
+    applyAnswersToPreset,
+    buildInitialSelection,
+    diffPreset,
+    pendingModeQuestions,
+} from '../src/ui/configureLogic.js';
+
+const require = createRequire(import.meta.url);
+/** The demo-app payload — the same 13 rows `wsc -c` shows. */
+const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'));
+
+describe('buildInitialSelection', () => {
+    test('offers every configuration the IDE reported, in the IDE’s order', () => {
+        const { choices } = buildInitialSelection(CONFIGS);
+        assert.equal(choices.length, 13);
+        assert.deepEqual(choices.map((c) => c.value), CONFIGS.map((c) => c.name));
+    });
+
+    test('nothing is checked when there is no preset yet', () => {
+        const { choices } = buildInitialSelection(CONFIGS);
+        assert.deepEqual(choices.filter((c) => c.checked), []);
+    });
+
+    test('the saved preset comes back checked — the re-run acceptance check', () => {
+        const preset = [{ name: 'web', mode: 'debug' }, { name: 'api', mode: 'run' }];
+        const { choices } = buildInitialSelection(CONFIGS, preset);
+
+        assert.deepEqual(choices.filter((c) => c.checked).map((c) => c.value), ['web', 'api']);
+    });
+
+    test('a checked choice carries the mode it was saved with', () => {
+        const { choices } = buildInitialSelection(CONFIGS, [{ name: 'web', mode: 'debug' }]);
+        const web = choices.find((c) => c.value === 'web');
+        assert.equal(web.mode, 'debug');
+        assert.equal(choices.find((c) => c.value === 'api').mode, null);
+    });
+
+    test('the label shows the configuration type, the value stays the exact name', () => {
+        const { choices } = buildInitialSelection(CONFIGS);
+        const web = choices.find((c) => c.value === 'web');
+        assert.equal(web.name, 'web  (npm)');
+        assert.equal(web.value, 'web', 'the value is what gets saved and resolved');
+    });
+
+    test('a configuration with no description is labelled by name alone', () => {
+        const { choices } = buildInitialSelection([{ name: 'bare' }]);
+        assert.equal(choices[0].name, 'bare');
+    });
+
+    test('names containing colons survive as values untouched', () => {
+        const { choices } = buildInitialSelection(CONFIGS);
+        assert.ok(choices.some((c) => c.value === 'api > repro:stale-job:debug'));
+    });
+
+    test('a preset entry the IDE no longer reports is flagged as stale', () => {
+        const preset = [{ name: 'web', mode: 'run' }, { name: 'deleted-in-the-ide', mode: 'debug' }];
+        const { choices, stale } = buildInitialSelection(CONFIGS, preset);
+
+        assert.deepEqual(stale.map((e) => e.name), ['deleted-in-the-ide']);
+        assert.equal(choices.filter((c) => c.checked).length, 1, 'a stale entry cannot be shown as checked');
+    });
+
+    test('an empty IDE list yields no choices rather than throwing', () => {
+        assert.deepEqual(buildInitialSelection([], []), { choices: [], stale: [] });
+    });
+});
+
+describe('pendingModeQuestions', () => {
+    test('asks about every configuration when the preset is new', () => {
+        assert.deepEqual(pendingModeQuestions(['web', 'api']), ['web', 'api']);
+    });
+
+    test('does not re-ask about configurations already in the preset', () => {
+        const preset = [{ name: 'web', mode: 'debug' }];
+        assert.deepEqual(pendingModeQuestions(['web', 'api'], preset), ['api']);
+    });
+
+    test('asks nothing when the selection is unchanged', () => {
+        const preset = [{ name: 'web', mode: 'debug' }, { name: 'api', mode: 'run' }];
+        assert.deepEqual(pendingModeQuestions(['web', 'api'], preset), []);
+    });
+
+    test('a preset entry that was unchecked is not asked about', () => {
+        const preset = [{ name: 'web', mode: 'debug' }];
+        assert.deepEqual(pendingModeQuestions([], preset), []);
+    });
+
+    test('follows the order of the selection', () => {
+        assert.deepEqual(pendingModeQuestions(['api', 'web']), ['api', 'web']);
+    });
+});
+
+describe('applyAnswersToPreset', () => {
+    test('builds entries from a fresh selection and its answers', () => {
+        const preset = applyAnswersToPreset(['web', 'api'], { web: 'debug', api: 'run' });
+        assert.deepEqual(preset, [
+            { name: 'web', mode: 'debug' },
+            { name: 'api', mode: 'run' },
+        ]);
+    });
+
+    test('an unanswered selection defaults to run', () => {
+        assert.deepEqual(applyAnswersToPreset(['web']), [{ name: 'web', mode: DEFAULT_MODE }]);
+        assert.equal(DEFAULT_MODE, 'run');
+    });
+
+    test('an unchecked configuration is dropped', () => {
+        const before = [{ name: 'web', mode: 'debug' }, { name: 'api', mode: 'run' }];
+        assert.deepEqual(applyAnswersToPreset(['api'], {}, before), [{ name: 'api', mode: 'run' }]);
+    });
+
+    test('an existing entry keeps its mode when it was not re-asked', () => {
+        const before = [{ name: 'web', mode: 'debug' }];
+        assert.deepEqual(applyAnswersToPreset(['web'], {}, before), [{ name: 'web', mode: 'debug' }]);
+    });
+
+    test('an answer overrides the stored mode', () => {
+        const before = [{ name: 'web', mode: 'debug' }];
+        assert.deepEqual(applyAnswersToPreset(['web'], { web: 'run' }, before), [
+            { name: 'web', mode: 'run' },
+        ]);
+    });
+
+    test('existing entries keep their order; new ones are appended', () => {
+        // A deliberately ordered preset must not be reshuffled by an unrelated edit.
+        const before = [{ name: 'api', mode: 'run' }, { name: 'web', mode: 'debug' }];
+        const after = applyAnswersToPreset(['web', 'docs', 'api'], { docs: 'run' }, before);
+
+        assert.deepEqual(after.map((e) => e.name), ['api', 'web', 'docs']);
+    });
+
+    test('unknown keys on an existing entry are preserved', () => {
+        // The store round-trips unknown fields; the configure screen must not undo that.
+        const before = [{ name: 'web', mode: 'run', note: 'keep me' }];
+        assert.deepEqual(applyAnswersToPreset(['web'], { web: 'debug' }, before), [
+            { name: 'web', mode: 'debug', note: 'keep me' },
+        ]);
+    });
+
+    test('an empty selection clears the preset', () => {
+        assert.deepEqual(applyAnswersToPreset([], {}, [{ name: 'web', mode: 'run' }]), []);
+    });
+
+    test('does not mutate the preset it was given', () => {
+        const before = [{ name: 'web', mode: 'run' }];
+        applyAnswersToPreset(['web'], { web: 'debug' }, before);
+        assert.equal(before[0].mode, 'run');
+    });
+
+    test('the result round-trips through the whole flow', () => {
+        // checkbox → mode questions → saved preset → shown checked again.
+        const first = applyAnswersToPreset(['web', 'api'], { web: 'debug', api: 'run' });
+        const { choices } = buildInitialSelection(CONFIGS, first);
+
+        assert.deepEqual(choices.filter((c) => c.checked).map((c) => [c.value, c.mode]), [
+            ['web', 'debug'],
+            ['api', 'run'],
+        ]);
+        assert.deepEqual(pendingModeQuestions(['web', 'api'], first), []);
+    });
+});
+
+describe('configurations named after Object.prototype members', () => {
+    const INHERITED = ['constructor', 'toString', 'valueOf', '__proto__'];
+
+    for (const name of INHERITED) {
+        test(`"${name}" with no answer defaults to run, not an inherited value`, () => {
+            assert.deepEqual(applyAnswersToPreset([name]), [{ name, mode: 'run' }]);
+        });
+
+        test(`"${name}" keeps its stored mode when unanswered`, () => {
+            const before = [{ name, mode: 'debug' }];
+            assert.deepEqual(applyAnswersToPreset([name], {}, before), [{ name, mode: 'debug' }]);
+        });
+    }
+
+    test('an explicit answer for such a name is still honoured', () => {
+        const modes = Object.create(null);
+        modes.constructor = 'debug';
+        assert.deepEqual(applyAnswersToPreset(['constructor'], modes), [
+            { name: 'constructor', mode: 'debug' },
+        ]);
+    });
+
+    test('an answer stored on a plain object is honoured too', () => {
+        assert.deepEqual(applyAnswersToPreset(['toString'], { toString: 'debug' }), [
+            { name: 'toString', mode: 'debug' },
+        ]);
+    });
+
+    test('such a name can be checked and unchecked like any other', () => {
+        const { choices } = buildInitialSelection([{ name: 'constructor' }], [{ name: 'constructor', mode: 'debug' }]);
+        assert.equal(choices[0].checked, true);
+        assert.equal(choices[0].mode, 'debug');
+        assert.deepEqual(pendingModeQuestions(['constructor'], [{ name: 'constructor', mode: 'debug' }]), []);
+    });
+});
+
+describe('diffPreset', () => {
+    test('reports an unchanged preset', () => {
+        const preset = [{ name: 'web', mode: 'run' }];
+        assert.equal(diffPreset(preset, [...preset]).unchanged, true);
+    });
+
+    test('reports additions', () => {
+        const diff = diffPreset([], [{ name: 'web', mode: 'run' }]);
+        assert.deepEqual(diff.added, ['web']);
+        assert.equal(diff.unchanged, false);
+    });
+
+    test('reports removals', () => {
+        const diff = diffPreset([{ name: 'web', mode: 'run' }], []);
+        assert.deepEqual(diff.removed, ['web']);
+    });
+
+    test('reports a mode change, not an add plus a remove', () => {
+        const diff = diffPreset([{ name: 'web', mode: 'run' }], [{ name: 'web', mode: 'debug' }]);
+        assert.deepEqual(diff.changed, ['web → debug']);
+        assert.deepEqual(diff.added, []);
+        assert.deepEqual(diff.removed, []);
+    });
+
+    test('reports all three kinds at once', () => {
+        const before = [{ name: 'web', mode: 'run' }, { name: 'api', mode: 'run' }];
+        const after = [{ name: 'web', mode: 'debug' }, { name: 'docs', mode: 'run' }];
+        const diff = diffPreset(before, after);
+
+        assert.deepEqual(diff.changed, ['web → debug']);
+        assert.deepEqual(diff.added, ['docs']);
+        assert.deepEqual(diff.removed, ['api']);
+    });
+});

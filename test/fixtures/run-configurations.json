@@ -1,0 +1,69 @@
+{
+  "configurations": [
+    {
+      "name": "Repro: Stale Job Cleanup",
+      "description": "Node.js",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "web",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "gateway",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "api",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "mailer",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "addon-client",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "addon-server",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "shared",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "client > bundle:build",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "docs",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "api > repro:stale-job:debug",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "mailer > debug:log",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    },
+    {
+      "name": "addon-client-watch",
+      "description": "npm",
+      "supportsDynamicLaunchOverrides": false
+    }
+  ]
+}
