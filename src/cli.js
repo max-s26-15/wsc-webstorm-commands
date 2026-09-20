@@ -63,7 +63,7 @@ const pkg = require('../package.json');
 const HELP = `wsc — run WebStorm run configurations in one command
 
 Usage:
-  wsc [options] [configuration[:run|:debug] ...]
+  wsc [options] [configuration[:run|:debug|:terminal] ...]
 
 Options:
   -c, --configure       pick which configurations launch by default, and how
@@ -85,7 +85,8 @@ Examples:
   wsc web:debug api              preset plus two more, web in debug mode
   wsc --list                          print every configuration the IDE knows about
   wsc --preset backend --dry-run      show what the "backend" preset would launch
-  wsc --target=terminal web       launch web in a Terminal tab instead
+  wsc web:terminal api            web in a Terminal tab, api in the Run window
+  wsc --target=terminal web       launch everything in Terminal tabs instead
   wsc -c                              edit the default preset interactively
   wsc --fallback=retry web        wait for WebStorm to come up, then launch
   wsc --fallback=terminal web     launch in OS terminal tabs, without WebStorm
@@ -95,6 +96,10 @@ Without it the IDE's MCP API has no debug parameter, so the command runs in a Te
 rebuilt with --inspect-brk, and each :debug entry gets its own inspector port, counting up
 from ${DEBUG_PORT_BASE} — attach WebStorm to the port wsc prints for it. --target=terminal
 always takes that Terminal route.
+
+:terminal starts one configuration in a new IDE Terminal tab, without a debugger — the same
+launch --target=terminal gives every entry, chosen per entry (and storable in a preset).
+Only npm and Node.js configurations can be rebuilt as a command line for it.
 
 Without the IDE (--fallback=terminal), wsc opens one OS terminal tab per configuration —
 gnome-terminal, konsole, Terminal.app or Windows Terminal, whichever is installed — and

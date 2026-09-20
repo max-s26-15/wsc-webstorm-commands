@@ -182,6 +182,26 @@ exercises it.
   options object instead, like `buildLaunchPlan` next door. Building is **atomic**, same as plan building:
   an entry that cannot be expressed as a command throws `UnsupportedLaunchError` before a single call is
   issued.
+- **`:terminal` is a third *mode*, per entry — not a new `--target`.** `src/modes.js` is the one place the
+  list `['run', 'debug', 'terminal']` and `DEFAULT_MODE` are spelled; `args.js`, `presets/store.js` and
+  `ui/configureLogic.js` re-export them and `ui/configure.js` builds its `select()` choices from them, so
+  the command line, the preset file and the `--configure` screen cannot drift (before that, `MODES` was
+  duplicated in two files and the `'run' | 'debug'` literal in ten JSDoc types; `test/modes.test.js` pins
+  the identity). `--target=terminal` is the same launch for the *whole run* and stays a separate flag:
+  `usesTerminal(entry, target, {debugTool})` is `target === 'terminal' || mode === 'terminal' ||
+  (mode === 'debug' && !debugTool)`, so a terminal entry takes the existing `.idea/`-backed `commandFor`
+  path and needs no new machinery. It gets **no inspector port and no reroute note** (nothing is debugged
+  and nothing was rerouted behind the user's back), which is why `debugSeen` counts `debug` entries only.
+  Three seams that were easy to miss: `formatPlan()` pads the mode column to `max(5, longest mode)` — a
+  fixed 8 would have re-aligned every pinned `--dry-run` text, and 5 would run `terminal` into the source;
+  the launch header says `via run-window + terminal` for a mixed plan (it was untrue otherwise);
+  `terminalEscapeHint('terminal')` names `:run`, because "drop `--target=terminal`" is advice that does
+  nothing for an entry that asked for the terminal itself. On the no-IDE path every tab is already an OS
+  terminal, so `:terminal` there **is** `:run` (`buildFallbackCommand` only ever special-cased `debug`);
+  pinned by `runTerminalFallback — terminal entries`. The schema version stays 1: an older `wsc` reading
+  `mode: "terminal"` stops with a `PresetConfigError` naming the file, which is the store's rule anyway.
+  In `test/cli.integration.test.js` the terminal command line is matched by shape, not text — it may carry
+  a `PATH=` for the project's `.nvmrc`, which depends on the machine.
 - **`ide-plugin/` — the optional WebStorm plugin that makes `:debug` a real Debug tab.** A small Kotlin plugin
   (Gradle + IntelliJ Platform Gradle Plugin, built against the installed IDE — see `ide-plugin/README.md`) that
   registers one MCP tool, `debug_run_configuration(configurationName)`, which starts the configuration with
