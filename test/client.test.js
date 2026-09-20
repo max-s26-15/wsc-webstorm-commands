@@ -256,6 +256,37 @@ describe('connectMcp — the handshake, against a real socket', () => {
         }
     });
 
+    test('introduces itself as "wsc" unless told a name, and as that name when told', async () => {
+        // The IDE titles a Terminal tab after this name, so it is behaviour, not decoration.
+        const introduced = [];
+        const server = await startServer((req, res) => {
+            if (String(req.url).startsWith('/sse')) {
+                res.writeHead(200, { 'content-type': 'text/event-stream' });
+                res.write(': hi\n\n');
+                return;
+            }
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+                try {
+                    introduced.push(JSON.parse(body).params?.clientInfo?.name);
+                } catch {
+                    introduced.push(undefined);
+                }
+                res.writeHead(404, { 'content-type': 'text/plain' });
+                res.end('not here');
+            });
+        });
+
+        try {
+            await assert.rejects(() => connectMcp(server.port, { connectTimeoutMs: 3_000 }));
+            await assert.rejects(() => connectMcp(server.port, { connectTimeoutMs: 3_000, clientName: 'api > repro:stale-job' }));
+            assert.deepEqual(introduced, ['wsc', 'api > repro:stale-job']);
+        } finally {
+            await server.close();
+        }
+    });
+
     test('a socket that accepts and never answers times out instead of hanging forever', async () => {
         const server = await startSilentServer();
         const started = Date.now();

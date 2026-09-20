@@ -345,6 +345,28 @@ describe('buildExecutionPlan — the :terminal mode', () => {
     });
 });
 
+describe('buildExecutionPlan — the name of a Terminal tab', () => {
+    test('every terminal call carries the configuration name as its tab name', () => {
+        const calls = buildExecutionPlan({ plan: plan('web:terminal', 'api:debug') });
+        assert.deepEqual(calls.map((call) => call.tabName), ['web', 'api']);
+    });
+
+    test('so does a plain run under --target=terminal', () => {
+        const calls = buildExecutionPlan({ plan: plan('web', 'api'), target: 'terminal' });
+        assert.deepEqual(calls.map((call) => call.tabName), ['web', 'api']);
+    });
+
+    test('a Run-window or Debug-tool call has no tab to name', () => {
+        const calls = buildExecutionPlan({ plan: plan('web', 'api:debug'), debugTool: true });
+        assert.deepEqual(calls.map((call) => call.tabName), [undefined, undefined]);
+    });
+
+    test('the name is the whole name, colons and spaces included', () => {
+        const [call] = buildExecutionPlan({ plan: plan('client > bundle:build:terminal') });
+        assert.equal(call.tabName, 'client > bundle:build');
+    });
+});
+
 describe('debugEnvPrefix — finding #3, an inherited NODE_OPTIONS', () => {
     /**
      * Run a built prefix through a real POSIX shell and read the result back.

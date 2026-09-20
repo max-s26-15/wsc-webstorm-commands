@@ -169,6 +169,86 @@ describe('runExecutionPlan — the happy path', () => {
     });
 });
 
+describe('runExecutionPlan — one named session per Terminal tab', () => {
+    // The IDE titles a Terminal tab after the MCP client that opened it, and
+    // execute_terminal_command has no parameter for a name. So a call that carries a
+    // tabName is made over its own short-lived session, opened under that name.
+
+    /** @param {string} name @param {string} command */
+    const tabCall = (name, command) => ({ ...termCall(name, command), tabName: name });
+
+    /** connectAs double: hands out one recording client per name and remembers who closed. */
+    function namedSessions(handler) {
+        const opened = [];
+        return {
+            opened,
+            connectAs: async (name) => {
+                const { client, calls } = mockClient(handler);
+                const session = { name, calls, closed: false };
+                opened.push(session);
+                return { ...client, close: async () => { session.closed = true; } };
+            },
+        };
+    }
+
+    test('a call with a tabName goes over a session opened under that name, and is closed after', async () => {
+        const main = mockClient();
+        const { opened, connectAs } = namedSessions();
+
+        const report = await runExecutionPlan([tabCall('api', 'npm run api')], { client: main.client, connectAs });
+
+        assert.deepEqual(opened.map((s) => s.name), ['api']);
+        assert.equal(opened[0].calls.length, 1);
+        assert.equal(opened[0].calls[0].name, TERMINAL_TOOL);
+        assert.equal(opened[0].closed, true);
+        assert.equal(main.calls.length, 0, 'the shared session must not carry a named tab');
+        assert.equal(report.started.length, 1);
+    });
+
+    test('every tab gets its own session, and run-window calls keep the shared one', async () => {
+        const main = mockClient();
+        const { opened, connectAs } = namedSessions();
+
+        await runExecutionPlan(
+            [tabCall('api', 'npm run api'), runCall('web'), tabCall('docs', 'npm run docs')],
+            { client: main.client, connectAs },
+        );
+
+        assert.deepEqual(opened.map((s) => s.name), ['api', 'docs']);
+        assert.deepEqual(main.calls.map((c) => c.args.configurationName), ['web']);
+    });
+
+    test('the session is closed even when the call is rejected', async () => {
+        const main = mockClient();
+        const { opened, connectAs } = namedSessions(() => {
+            throw new McpToolError('execute_terminal_command', 'boom');
+        });
+
+        const report = await runExecutionPlan([tabCall('api', 'npm run api')], { client: main.client, connectAs });
+
+        assert.equal(opened[0].closed, true);
+        assert.equal(report.failed.length, 1);
+    });
+
+    test('a session that cannot be opened falls back to the shared one, and says the name is lost', async () => {
+        const main = mockClient();
+        const log = mockLog();
+        const connectAs = async () => { throw new Error('connection refused'); };
+
+        const report = await runExecutionPlan([tabCall('api', 'npm run api')], { client: main.client, connectAs, log });
+
+        assert.equal(main.calls.length, 1, 'the launch must still happen');
+        assert.equal(report.started.length, 1);
+        assert.ok(log.lines.some((line) => /^warn: could not open a session named "api".*titled "wsc"/.test(line)), log.lines.join('\n'));
+    });
+
+    test('without connectAs a tabName changes nothing: the shared session is used', async () => {
+        const main = mockClient();
+        await runExecutionPlan([tabCall('api', 'npm run api')], { client: main.client });
+        assert.equal(main.calls.length, 1);
+    });
+});
+
 describe('runExecutionPlan — partial failure', () => {
     /** Fails only on the named configuration, the way the IDE rejects one launch. */
     const failOn = (bad) =>

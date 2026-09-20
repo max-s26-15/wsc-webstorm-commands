@@ -36,6 +36,8 @@ export function fakeCliDeps(opts = {}) {
     const calls = [];
     /** Every plan handed to the execution seam. Empty means nothing was ever launched. */
     const executed = [];
+    /** Every context the execution seam was handed (calls, the shared client, connectAs). */
+    const executeContexts = [];
     /** Every call to the --configure screen. */
     const configured = [];
     /** Every hand-over to the phase-8 terminal fallback. */
@@ -67,8 +69,9 @@ export function fakeCliDeps(opts = {}) {
             return 0;
         },
 
-        executePlan: async (plan) => {
+        executePlan: async (plan, ctx) => {
             executed.push(plan);
+            executeContexts.push(ctx);
             return 0;
         },
 
@@ -78,7 +81,7 @@ export function fakeCliDeps(opts = {}) {
         },
 
         connectMcp: async (port, connectOpts) => {
-            calls.push({ type: 'connect', port, projectPath: connectOpts?.projectPath });
+            calls.push({ type: 'connect', port, projectPath: connectOpts?.projectPath, clientName: connectOpts?.clientName });
             return {
                 projectPath: connectOpts?.projectPath,
                 callTool: async (name, args) => {
@@ -109,6 +112,7 @@ export function fakeCliDeps(opts = {}) {
         deps,
         calls,
         executed,
+        executeContexts,
         configured,
         fellBack,
         asked,

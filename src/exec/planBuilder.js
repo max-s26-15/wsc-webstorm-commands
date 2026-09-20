@@ -33,7 +33,12 @@ import { debugConfigurationCall, runConfigurationCall, terminalCommandCall } fro
  *   note?: string,
  *   debugPort?: number,
  *   commandSource?: CommandSource,
+ *   tabName?: string,
  * }} McpCall
+ *
+ * `tabName` is set on a Terminal call only: what the IDE should title that tab. The tool
+ * has no parameter for it, so the runner puts the call on a session of that name instead
+ * (see runExecutionPlan).
  *
  * Where the shell command line behind a terminal call came from.
  *   'idea' — read out of what WebStorm saved to .idea/, so it is the real definition.
@@ -389,6 +394,8 @@ export function buildExecutionPlan({
         };
 
         if (built?.source !== undefined) call.commandSource = built.source;
+        // The tab is titled after the configuration it runs, not "wsc".
+        if (built !== null) call.tabName = entry.name;
         // Carried on the call so the runner can print where to attach, and so the CLI can
         // check the port before anything is launched.
         if (debugPort !== undefined) call.debugPort = debugPort;

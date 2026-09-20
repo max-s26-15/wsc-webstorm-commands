@@ -285,6 +285,7 @@ async function hasDebugTool(client, log) {
  *   client: import('./mcp/client.js').McpClient,
  *   log: ReturnType<typeof createLogger>,
  *   calls: import('./exec/planBuilder.js').McpCall[],
+ *   connectAs?: (name: string) => Promise<import('./mcp/client.js').McpClient>,
  * }} ctx
  * @returns {Promise<number>}
  */
@@ -751,6 +752,10 @@ async function run(argv, deps) {
 
         // The MCP session is still open here, and stays open until this promise settles:
         // see withMcpSession().
-        return (deps.executePlan ?? executePlan)(plan, { client, log, calls });
+        // A Terminal tab is titled after the MCP client that opened it, so each one gets a
+        // session called by its configuration's name — see runExecutionPlan().
+        const connectAs = (/** @type {string} */ name) =>
+            (deps.connectMcp ?? connectMcp)(reached.port, { projectPath: projectRoot, clientName: name, log });
+        return (deps.executePlan ?? executePlan)(plan, { client, log, calls, connectAs });
     });
 }

@@ -40,6 +40,7 @@ async function wsc(argv, opts = {}) {
             stderr: h.stderr(),
             output: h.output(),
             executed: h.executed,
+            contexts: h.executeContexts,
             configured: h.configured,
             fellBack: h.fellBack,
             calls: h.calls,
@@ -484,6 +485,22 @@ describe('flag table — --dry-run', () => {
         assert.match(result.stderr, /^would launch 2 configuration\(s\) via run-window \+ terminal:$/m);
         assert.doesNotMatch(result.stderr, /inspector|debug/i, 'nothing was rerouted, so nothing is announced');
         assert.deepEqual(result.executed, [], 'a dry run must never reach the execution seam');
+    });
+
+    test('each Terminal tab is titled after its configuration: the launch gets a session of that name', async () => {
+        // The IDE titles a tab after the MCP client that opened it (see connectMcp), so the
+        // launch is handed a way to open one session per tab, each called by the entry's name.
+        const result = await wsc(['shared', 'web:terminal', 'api:terminal'], { idea: true });
+
+        assert.equal(result.code, 0);
+        const [ctx] = result.contexts;
+        assert.deepEqual(ctx.calls.map((call) => call.tabName), [undefined, 'web', 'api']);
+
+        await ctx.connectAs('web');
+        const named = result.calls.filter((c) => c.type === 'connect' && c.clientName !== undefined);
+        assert.deepEqual(named.map((c) => c.clientName), ['web']);
+        assert.equal(named[0].port, 64542, 'the same MCP Server as the shared session');
+        assert.ok(named[0].projectPath, 'and the same project — the IDE needs it on every session');
     });
 
     test('a preset entry with mode terminal launches the same way as :terminal', async () => {

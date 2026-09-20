@@ -16,7 +16,14 @@ export const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 /** Timeout for the initialize handshake. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 
-/** Identity reported to the IDE during the handshake. */
+/**
+ * Identity reported to the IDE during the handshake.
+ *
+ * The name is not decoration: WebStorm titles a Terminal tab after the MCP client that
+ * opened it, and execute_terminal_command has no parameter for a tab name (measured — three
+ * calls from a client called "wsc" gave three tabs titled "wsc"; two clients called
+ * "probe-alpha" and "probe-beta" gave tabs with those titles). See connectMcp()'s clientName.
+ */
 const CLIENT_INFO = { name: 'wsc', version: '1.0.0' };
 
 /**
@@ -215,6 +222,8 @@ export function createMcpClient(session, opts = {}) {
  * @param {number} port - from discoverPort()
  * @param {object} [opts]
  * @param {string} [opts.projectPath]
+ * @param {string} [opts.clientName] - what the session calls itself (default: "wsc"); the
+ *   IDE shows it as the title of any Terminal tab this session opens
  * @param {number} [opts.timeoutMs]
  * @param {number} [opts.connectTimeoutMs]
  * @param {{ debug: (...args: any[]) => void }} [opts.log]
@@ -227,7 +236,7 @@ export async function connectMcp(port, opts = {}) {
     );
 
     const url = new URL(`http://127.0.0.1:${port}${MCP_PATH}`);
-    const session = new Client(CLIENT_INFO, { capabilities: {} });
+    const session = new Client({ ...CLIENT_INFO, name: opts.clientName ?? CLIENT_INFO.name }, { capabilities: {} });
     const transport = new StreamableHTTPClientTransport(url);
 
     // connect() performs the initialize handshake; without a guard a half-open
