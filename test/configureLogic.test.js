@@ -226,6 +226,11 @@ describe('diffPreset', () => {
         assert.deepEqual(diff.removed, []);
     });
 
+    test('a change to terminal is reported like any other mode change', () => {
+        const diff = diffPreset([{ name: 'web', mode: 'run' }], [{ name: 'web', mode: 'terminal' }]);
+        assert.deepEqual(diff.changed, ['web → terminal']);
+    });
+
     test('reports all three kinds at once', () => {
         const before = [{ name: 'web', mode: 'run' }, { name: 'api', mode: 'run' }];
         const after = [{ name: 'web', mode: 'debug' }, { name: 'docs', mode: 'run' }];

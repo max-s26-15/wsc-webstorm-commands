@@ -7,6 +7,7 @@
  */
 import { checkbox, select } from '@inquirer/prompts';
 
+import { DEFAULT_MODE, MODES } from '../modes.js';
 import { hasPreset, setPreset, writePresets } from '../presets/store.js';
 import { applyAnswersToPreset, buildInitialSelection, diffPreset, pendingModeQuestions } from './configureLogic.js';
 import { CANCELLED_EXIT_CODE, isCancelled } from './promptCancel.js';
@@ -96,11 +97,9 @@ export async function runConfigure(opts) {
         for (const name of pendingModeQuestions(selection, before)) {
             modes[name] = await prompts.select({
                 message: `Mode for "${name}"`,
-                choices: [
-                    { name: 'run', value: 'run' },
-                    { name: 'debug', value: 'debug' },
-                ],
-                default: 'run',
+                // Built from MODES so a mode added there cannot be missing from this screen.
+                choices: MODES.map((mode) => ({ name: mode, value: mode })),
+                default: DEFAULT_MODE,
             });
         }
     } catch (err) {

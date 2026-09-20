@@ -19,7 +19,7 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
  * @param {object} opts
  * @param {string} opts.dir
  * @param {string[]} [opts.checked] - what the checkbox returns
- * @param {Array<'run'|'debug'>} [opts.modes] - answers to the mode questions, in order
+ * @param {Array<import('../src/modes.js').LaunchMode>} [opts.modes] - answers to the mode questions, in order
  * @param {object} [opts.config] - preset file contents as already read
  * @param {Error} [opts.throws] - make the first prompt throw (Ctrl-C, for instance)
  * @param {Error} [opts.throwsOnSelect] - make the *mode* prompt throw instead, so the
@@ -40,7 +40,7 @@ async function configure(opts) {
             return opts.checked ?? [];
         },
         select: async (config) => {
-            asked.push({ type: 'select', message: config.message });
+            asked.push({ type: 'select', message: config.message, choices: config.choices, default: config.default });
             if (opts.throws) throw opts.throws;
             if (opts.throwsOnSelect) throw opts.throwsOnSelect;
             return remaining.shift() ?? 'run';
@@ -93,6 +93,32 @@ describe('runConfigure — the interactive screen', () => {
             ]);
             assert.match(output, /saved preset "default"/);
             assert.match(output, /\+ web/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('the mode question offers run, debug and terminal, defaulting to run', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { asked } = await configure({ dir, checked: ['web'], modes: ['run'] });
+            const [question] = asked.filter((a) => a.type === 'select');
+            assert.deepEqual(question.choices.map((c) => c.value), ['run', 'debug', 'terminal']);
+            assert.equal(question.default, 'run');
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a terminal answer is saved as the entry\'s mode', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            await configure({ dir, checked: ['web', 'api'], modes: ['terminal', 'run'] });
+            const saved = await readPresets(dir);
+            assert.deepEqual(saved.presets.default, [
+                { name: 'web', mode: 'terminal' },
+                { name: 'api', mode: 'run' },
+            ]);
         } finally {
             await cleanup();
         }
