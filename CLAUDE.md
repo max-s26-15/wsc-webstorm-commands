@@ -26,6 +26,9 @@ npm run test:watch    # same, in watch mode
 npm run test:coverage # node --test --experimental-test-coverage
 npm run typecheck     # tsc --noEmit -p jsconfig.json — checks JSDoc types in bin/, src/, scripts/
 npm run mcp:probe     # node scripts/mcp-probe.js — manual diagnostic against a live WebStorm instance
+node --test test/resolve.test.js                       # one test file
+node --test --test-name-pattern='dry-run' test/cli.test.js  # tests whose name matches a pattern
+(cd ide-plugin && JAVA_HOME=/snap/webstorm/current/jbr ./gradlew buildPlugin)  # optional Kotlin plugin → build/distributions/*.zip
 npm link && wsc --help  # exercise the real entrypoint from any directory
 ```
 
@@ -35,6 +38,15 @@ transpilation). Types are JSDoc-only, checked by `tsc` in `--noEmit`/`allowJs`/`
 (fake streams, fake MCP sessions) are not meant to satisfy Node's/the SDK's full public types.
 
 ## Architecture
+
+Orientation: everything below is a per-file decision log, long on purpose. The shape is one pipeline in
+`src/cli.js` — args → project root → preset → MCP (or the `src/fallback/` no-IDE path) → resolve →
+`buildExecutionPlan()` → `runExecutionPlan()` — and most bugs recorded here come from a seam between two of
+those stages, so read the paragraph for the file you are touching before changing it.
+
+Repo hygiene: `.claude/.claude/` is an accidental nested copy of `.claude/` (untracked, not gitignored) —
+do not edit it or commit it. `ide-plugin/` is Kotlin/Gradle and has its own `README.md`; nothing in `npm test`
+exercises it.
 
 - `bin/wsc.js` — shebang entrypoint. Calls `runCli(process.argv.slice(2))` and does `process.exit(code)`.
   No logic lives here; keep it that way so `src/cli.js` stays unit-testable without spawning a process.
