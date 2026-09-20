@@ -25,7 +25,7 @@ const PAGE_SIZE = 20;
  * so JSDoc keeps a concrete shape instead of a bare `object`.
  * @typedef {{
  *   checkbox: (config: any) => Promise<string[]>,
- *   select: (config: any) => Promise<'run' | 'debug'>,
+ *   select: (config: any) => Promise<import('../modes.js').LaunchMode>,
  * }} Prompts
  */
 
@@ -90,7 +90,7 @@ export async function runConfigure(opts) {
 
     // Null prototype: a configuration named "__proto__" would otherwise hit the
     // prototype setter here and lose its answer silently.
-    /** @type {Record<string, 'run' | 'debug'>} */
+    /** @type {Record<string, import('../modes.js').LaunchMode>} */
     const modes = Object.create(null);
     try {
         for (const name of pendingModeQuestions(selection, before)) {

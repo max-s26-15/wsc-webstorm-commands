@@ -26,7 +26,7 @@ import { debugConfigurationCall, runConfigurationCall, terminalCommandCall } fro
  * @typedef {'run-window' | 'terminal'} ExecTarget
  * @typedef {{
  *   name: string,
- *   mode: 'run' | 'debug',
+ *   mode: import('../modes.js').LaunchMode,
  *   tool: string,
  *   arguments: Record<string, unknown>,
  *   timeoutMs?: number,
@@ -194,7 +194,7 @@ const SHELL_SAFE = /^[A-Za-z0-9._:@/+-]+$/;
  * it. Its own default — "start the MCP Server" — is the right advice only on the no-IDE
  * path, and would be nonsense here, where the IDE is answering.
  *
- * @param {'run' | 'debug'} mode
+ * @param {import('../modes.js').LaunchMode} mode
  * @returns {string} one indented line, ready to follow a message
  */
 export function terminalEscapeHint(mode) {
@@ -207,7 +207,7 @@ export function terminalEscapeHint(mode) {
 export class UnsupportedLaunchError extends Error {
     /**
      * @param {RunConfigInfo} config
-     * @param {'run' | 'debug'} mode
+     * @param {import('../modes.js').LaunchMode} mode
      */
     constructor(config, mode) {
         const kind = config.description ? `a "${config.description}" configuration` : 'of an unknown type';
@@ -269,7 +269,7 @@ export function splitNpmConfigName(name) {
  * knowable from here, and guessing one would launch the wrong process.
  *
  * @param {RunConfigInfo} config
- * @param {'run' | 'debug'} mode
+ * @param {import('../modes.js').LaunchMode} mode
  * @param {object} [opts]
  * @param {number} [opts.debugPort] - ignored unless mode is debug; defaults to the base,
  *   which is what a plan with a single debug entry gets anyway

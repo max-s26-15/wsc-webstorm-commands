@@ -177,7 +177,13 @@ describe('parseConfig — rejected input', () => {
     test('an entry with an empty name', () =>
         rejects('{"presets":{"a":[{"name":""}]}}', /entry 0 is missing a non-empty "name"/));
     test('an unknown mode', () =>
-        rejects('{"presets":{"a":[{"name":"api","mode":"profile"}]}}', /expected run or debug/));
+        rejects('{"presets":{"a":[{"name":"api","mode":"profile"}]}}', /expected run, debug or terminal/));
+
+    test('terminal is a mode, and survives a round trip', () => {
+        const config = parseConfig('{"presets":{"default":[{"name":"web","mode":"terminal"}]}}');
+        assert.deepEqual(config.presets.default, [{ name: 'web', mode: 'terminal' }]);
+        assert.deepEqual(parseConfig(serializeConfig(config)).presets.default, config.presets.default);
+    });
 
     test('names the offending entry index, not just the preset', () => {
         assert.throws(

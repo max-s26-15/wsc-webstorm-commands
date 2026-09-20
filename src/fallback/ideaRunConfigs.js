@@ -374,7 +374,7 @@ export async function readIdeaRunConfigs(projectRoot, opts = {}) {
  * debugEnvPrefix(), so a fallback command quotes and debugs identically to an IDE one.
  *
  * @param {IdeaRunConfig} config
- * @param {'run' | 'debug'} mode
+ * @param {import('../modes.js').LaunchMode} mode
  * @param {object} opts
  * @param {string} opts.projectRoot - commands are emitted relative to it, since every tab
  *   is opened there
@@ -426,7 +426,7 @@ export function buildFallbackCommand(config, mode, opts) {
  * The program half of the command line — everything after the env assignments.
  *
  * @param {IdeaRunConfig} config
- * @param {'run' | 'debug'} mode
+ * @param {import('../modes.js').LaunchMode} mode
  * @param {string} advice - the indented line a refusal ends with
  * @returns {string[]}
  */

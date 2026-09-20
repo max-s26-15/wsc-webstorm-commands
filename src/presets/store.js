@@ -14,6 +14,8 @@ import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { MODES } from '../modes.js';
+
 /** Directory the config lives in, relative to the project root. */
 export const CONFIG_DIR = '.idea';
 
@@ -26,11 +28,11 @@ export const SCHEMA_VERSION = 1;
 /** Name used when no preset is requested. */
 export const DEFAULT_PRESET = 'default';
 
-/** The only launch modes the IDE distinguishes. */
-export const MODES = /** @type {const} */ (['run', 'debug']);
+// The launch modes a preset entry may carry — the same list the command line accepts.
+export { MODES };
 
 /**
- * @typedef {{ name: string, mode: 'run' | 'debug', [extra: string]: unknown }} PresetEntry
+ * @typedef {{ name: string, mode: import('../modes.js').LaunchMode, [extra: string]: unknown }} PresetEntry
  * @typedef {{
  *   version: number,
  *   defaultPreset: string,
@@ -238,11 +240,11 @@ function parseEntry(entry, presetName, index, filePath) {
     if (mode !== undefined && !MODES.includes(/** @type {any} */ (mode))) {
         throw new PresetConfigError(
             filePath,
-            `${where} has mode ${JSON.stringify(mode)}, expected ${MODES.join(' or ')}`,
+            `${where} has mode ${JSON.stringify(mode)}, expected ${MODES.slice(0, -1).join(', ')} or ${MODES[MODES.length - 1]}`,
         );
     }
 
-    return { ...extra, name, mode: /** @type {'run' | 'debug'} */ (mode ?? 'run') };
+    return { ...extra, name, mode: /** @type {import('../modes.js').LaunchMode} */ (mode ?? 'run') };
 }
 
 /**

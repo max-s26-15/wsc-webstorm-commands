@@ -9,9 +9,9 @@
 
 /**
  * @typedef {{ name: string, description?: string, supportsDynamicLaunchOverrides?: boolean }} RunConfigInfo
- * @typedef {{ name: string, mode: 'run' | 'debug' }} RunRequest
+ * @typedef {{ name: string, mode: import('./modes.js').LaunchMode }} RunRequest
  * @typedef {'preset' | 'cli'} PlanSource
- * @typedef {{ name: string, mode: 'run' | 'debug', config: RunConfigInfo, source: PlanSource }} PlanEntry
+ * @typedef {{ name: string, mode: import('./modes.js').LaunchMode, config: RunConfigInfo, source: PlanSource }} PlanEntry
  */
 
 /** How close a name must be to be offered as "did you mean". */

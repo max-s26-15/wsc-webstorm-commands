@@ -6,13 +6,15 @@
  * looking like — are unit-tested without driving a terminal UI.
  */
 
-/** Mode assigned to a configuration the user checked but was never asked about. */
-export const DEFAULT_MODE = 'run';
+import { DEFAULT_MODE } from '../modes.js';
+
+// Mode assigned to a configuration the user checked but was never asked about.
+export { DEFAULT_MODE };
 
 /**
  * @typedef {import('../resolve.js').RunConfigInfo} RunConfigInfo
  * @typedef {import('../presets/store.js').PresetEntry} PresetEntry
- * @typedef {{ name: string, value: string, checked: boolean, mode: 'run' | 'debug' | null }} Choice
+ * @typedef {{ name: string, value: string, checked: boolean, mode: import('../modes.js').LaunchMode | null }} Choice
  */
 
 /**
@@ -67,7 +69,7 @@ export function pendingModeQuestions(selection, preset = []) {
  * preserved, matching what the store guarantees for hand-edited configs.
  *
  * @param {string[]} selection - values returned by the checkbox
- * @param {Record<string, 'run' | 'debug'>} [modes] - answers, plus any carried-over modes
+ * @param {Record<string, import('../modes.js').LaunchMode>} [modes] - answers, plus any carried-over modes
  * @param {PresetEntry[]} [preset] - the preset before editing
  * @returns {PresetEntry[]}
  */
@@ -92,9 +94,9 @@ export function applyAnswersToPreset(selection, modes = {}, preset = []) {
  * `modes` is keyed by configuration name, and a configuration may legitimately be
  * called "constructor" or "toString" — a plain lookup would return a function.
  *
- * @param {Record<string, 'run' | 'debug'>} modes
+ * @param {Record<string, import('../modes.js').LaunchMode>} modes
  * @param {string} name
- * @returns {'run' | 'debug' | undefined}
+ * @returns {import('../modes.js').LaunchMode | undefined}
  */
 function answered(modes, name) {
     return Object.hasOwn(modes, name) ? modes[name] : undefined;
