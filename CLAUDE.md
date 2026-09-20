@@ -95,6 +95,20 @@ transpilation). Types are JSDoc-only, checked by `tsc` in `--noEmit`/`allowJs`/`
   `AmbiguousNameError` listing them rather than guessing). Unknown names throw `UnknownConfigurationError`
   with Levenshtein + substring suggestions. `buildLaunchPlan()` resolves the preset and the command line
   *before* returning anything, so a typo in the third argument cannot leave the first two already launched.
+- **`--preset a b` launches several presets together.** `--preset` is the one `multiple: true` option, so
+  `--preset a --preset b` works too. The catch is that `b` in `--preset a b` is a *positional*, and
+  `wsc --preset watch test:coverage` has always meant "watch, plus the configuration test:coverage". So
+  `parseCliArgs()` returns `presetUses` (each `--preset` value plus the positional indexes directly after it)
+  and `splitPresetNames()` — called in `run()` only once the preset file is read — takes a following token as a
+  preset **only if it is one**; the first that is not ends the run and stays a configuration (so a typo
+  surfaces as "unknown configuration", not a confusing "unknown preset"). A name that is both a preset and a
+  configuration reads as the preset; `wsc x --preset a` or `--preset a --dry-run x` keeps it a configuration.
+  Entries are concatenated in the order typed and merged by `buildLaunchPlan()`'s existing `Map` rule (first
+  position, last mode wins). `presetName` is then just a `' + '`-joined label for messages and the no-IDE
+  hand-over. `--configure` edits one preset, so two are a usage error (exit 2). The early
+  `typed`-vs-`positionals` naming in `run()` is deliberate: the raw positionals are all that exists before the
+  file is read. Pinned by `test/args.test.js` (`splitPresetNames`) and `flag table — --preset` in
+  `test/cli.integration.test.js`.
 - **Preset and configuration names may collide with `Object.prototype`.** A preset called `constructor`, or
   a run configuration called `toString`, is legal input. Every lookup keyed by such a name uses
   `Object.hasOwn` (`hasPreset()` in the store, `answered()` in `configureLogic.js`) — a plain

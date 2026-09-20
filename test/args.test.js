@@ -2,7 +2,15 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-import { DEFAULT_MODE, OPTIONS, UsageError, parseCliArgs, parseRequests, splitNameMode } from '../src/args.js';
+import {
+    DEFAULT_MODE,
+    OPTIONS,
+    UsageError,
+    parseCliArgs,
+    parseRequests,
+    splitNameMode,
+    splitPresetNames,
+} from '../src/args.js';
 
 const require = createRequire(import.meta.url);
 /** The demo-app names — the colon cases below are not hypothetical. */
@@ -149,7 +157,7 @@ describe('parseRequests', () => {
 describe('parseCliArgs', () => {
     test('parses flags and positionals together', () => {
         const { values, positionals } = parseCliArgs(['--preset', 'backend', 'web:debug']);
-        assert.equal(values.preset, 'backend');
+        assert.deepEqual(values.preset, ['backend']);
         assert.deepEqual(positionals, ['web:debug']);
     });
 
@@ -163,7 +171,7 @@ describe('parseCliArgs', () => {
             '--preset', 'p', '--project', '/tmp/x', '--mcp-port', '64542', '--dry-run',
         ]);
         assert.deepEqual({ ...values }, {
-            preset: 'p', project: '/tmp/x', 'mcp-port': '64542', 'dry-run': true,
+            preset: ['p'], project: '/tmp/x', 'mcp-port': '64542', 'dry-run': true,
         });
     });
 
@@ -183,9 +191,74 @@ describe('parseCliArgs', () => {
         assert.deepEqual(parseCliArgs(['--', '--weird-name']).positionals, ['--weird-name']);
     });
 
-    test('OPTIONS declares no `multiple` flags — values are never arrays', () => {
+    test('--preset is the one `multiple` flag — every other value is a scalar', () => {
         for (const [name, option] of Object.entries(OPTIONS)) {
-            assert.notEqual(option.multiple, true, `${name} would break CliValues typing`);
+            assert.equal(option.multiple === true, name === 'preset', `${name}: unexpected multiple`);
         }
+    });
+
+    test('a repeated --preset keeps every value, in order', () => {
+        assert.deepEqual(parseCliArgs(['--preset', 'a', '--preset=b']).values.preset, ['a', 'b']);
+    });
+
+    test('presetUses records the positionals that directly follow each --preset', () => {
+        const { positionals, presetUses } = parseCliArgs(['x', '--preset', 'a', 'b', 'c', '--dry-run', 'd']);
+        assert.deepEqual(positionals, ['x', 'b', 'c', 'd']);
+        assert.deepEqual(presetUses, [{ name: 'a', following: [1, 2] }]);
+    });
+
+    test('a flag or `--` ends the run of tokens that follow --preset', () => {
+        assert.deepEqual(parseCliArgs(['--preset', 'a', '--dry-run', 'b']).presetUses, [{ name: 'a', following: [] }]);
+        assert.deepEqual(parseCliArgs(['--preset', 'a', '--', 'b']).presetUses, [{ name: 'a', following: [] }]);
+    });
+
+    test('--preset=a b reads like --preset a b', () => {
+        assert.deepEqual(parseCliArgs(['--preset=a', 'b']).presetUses, [{ name: 'a', following: [0] }]);
+    });
+});
+
+describe('splitPresetNames', () => {
+    const isPreset = (/** @type {string} */ name) => ['a', 'b', 'c'].includes(name);
+    const split = (/** @type {string[]} */ argv) => {
+        const { positionals, presetUses } = parseCliArgs(argv);
+        return splitPresetNames(positionals, presetUses, isPreset);
+    };
+
+    test('every token after --preset that is a preset is another preset', () => {
+        assert.deepEqual(split(['--preset', 'a', 'b', 'c']), { presets: ['a', 'b', 'c'], positionals: [] });
+    });
+
+    test('the first token that is not a preset ends the run, and stays a configuration', () => {
+        assert.deepEqual(split(['--preset', 'a', 'b', 'web', 'c']), {
+            presets: ['a', 'b'],
+            positionals: ['web', 'c'],
+        });
+    });
+
+    test('a token that is not a preset is a configuration, exactly as before', () => {
+        assert.deepEqual(split(['--preset', 'a', 'test:coverage']), {
+            presets: ['a'],
+            positionals: ['test:coverage'],
+        });
+    });
+
+    test('a repeated --preset keeps the order it was typed in', () => {
+        assert.deepEqual(split(['--preset', 'a', 'b', '--preset', 'c']), {
+            presets: ['a', 'b', 'c'],
+            positionals: [],
+        });
+    });
+
+    test('a preset name before the flag, or after another flag, is still a configuration', () => {
+        assert.deepEqual(split(['b', '--preset', 'a']), { presets: ['a'], positionals: ['b'] });
+        assert.deepEqual(split(['--preset', 'a', '--dry-run', 'b']), { presets: ['a'], positionals: ['b'] });
+    });
+
+    test('the value of --preset itself is not checked: a typo is reported by the caller', () => {
+        assert.deepEqual(split(['--preset', 'nope']), { presets: ['nope'], positionals: [] });
+    });
+
+    test('no --preset, no presets', () => {
+        assert.deepEqual(split(['b']), { presets: [], positionals: ['b'] });
     });
 });

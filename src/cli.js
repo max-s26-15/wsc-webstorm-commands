@@ -9,6 +9,7 @@ import {
     parseCliArgs,
     parseRequests,
     passedFlags,
+    splitPresetNames,
 } from './args.js';
 import {
     DEBUG_PORT_BASE,
@@ -67,7 +68,8 @@ Usage:
 Options:
   -c, --configure       pick which configurations launch by default, and how
   -l, --list            print every run configuration the project has, and stop
-      --preset <name>   preset to configure or launch (default: the config's defaultPreset)
+      --preset <name>   preset to configure or launch (default: the config's defaultPreset);
+                        to launch several, list them: --preset a b, or repeat the flag
       --project <path>  project root (default: nearest directory with .idea/)
       --mcp-port <n>    MCP Server port (default: WSC_MCP_PORT, then a scan)
       --target <where>  run-window (default) — native Run/Debug tabs — or terminal
@@ -495,7 +497,7 @@ async function runList({ projectRoot, values, fallback, deps }) {
  */
 async function run(argv, deps) {
     const { log, env, cwd, stdout } = deps;
-    const { values, positionals } = parseCliArgs(argv);
+    const { values, positionals: typed, presetUses } = parseCliArgs(argv);
 
     if (values.help) {
         stdout.write(HELP);
@@ -509,8 +511,17 @@ async function run(argv, deps) {
     // Editing a preset and naming configurations to launch are different intents;
     // accepting both would silently ignore one of them. Checked before the IDE is
     // contacted so the mistake is reported instantly.
-    if (values.configure && positionals.length > 0) {
-        throw new UsageError('--configure takes no configuration names');
+    if (values.configure && typed.length > 0) {
+        // `wsc -c --preset a b` lands here too, and "no configuration names" would send
+        // the user looking for the wrong mistake: `b` is meant as a second preset.
+        const twoPresets = presetUses.some((use) => use.following.length > 0);
+        throw new UsageError(
+            '--configure takes no configuration names' +
+                (twoPresets ? ' (and edits one preset at a time, so --preset cannot name two)' : ''),
+        );
+    }
+    if (values.configure && (values.preset?.length ?? 0) > 1) {
+        throw new UsageError('--configure edits one preset at a time, but --preset was given more than once');
     }
 
     // Same reasoning one level further: --configure launches nothing, so every flag that
@@ -536,7 +547,7 @@ async function run(argv, deps) {
         if (values.configure) {
             throw new UsageError('--list prints run configurations and --configure edits a preset; pick one');
         }
-        if (positionals.length > 0) {
+        if (typed.length > 0) {
             throw new UsageError('--list takes no configuration names: it prints every one of them');
         }
 
@@ -569,16 +580,28 @@ async function run(argv, deps) {
     if (values.list) return await runList({ projectRoot, values, fallback, deps });
 
     const config = await readPresets(projectRoot);
-    const presetName = values.preset ?? config.defaultPreset;
+    // `--preset a b` and `--preset a --preset b` name several presets, launched together as
+    // if they were one: entries in the order given, and a configuration in more than one
+    // keeps its first position with the last mode — the rule buildLaunchPlan() already has
+    // for a command-line name that overrides the preset's. Split here, not in parseCliArgs,
+    // because telling `b` the preset from `b` the configuration takes the file just read.
+    const explicitPreset = values.preset !== undefined;
+    const split = splitPresetNames(typed, presetUses, (name) => hasPreset(config, name));
+    const positionals = split.positionals;
+    const presetNames = explicitPreset ? split.presets : [config.defaultPreset];
+    // Only a label from here on (messages, the fallback's hand-over): --configure, the one
+    // caller that uses it as a key, has exactly one name.
+    const presetName = presetNames.join(' + ');
     const knownPresets = Object.keys(config.presets);
+    const missingPresets = presetNames.filter((name) => !hasPreset(config, name));
 
-    if (!hasPreset(config, presetName)) {
+    if (missingPresets.length > 0) {
         const hint = knownPresets.length > 0
             ? `known presets: ${knownPresets.join(', ')}`
             : 'no presets configured yet';
 
-        if (values.preset !== undefined && !values.configure) {
-            throw new WscError(`unknown preset "${presetName}" (${hint})`);
+        if (explicitPreset && !values.configure) {
+            throw new WscError(`unknown preset "${missingPresets[0]}" (${hint})`);
         }
 
         // A default that names nothing is a broken config, not an empty one — but only
@@ -591,7 +614,7 @@ async function run(argv, deps) {
         }
     }
 
-    const presetEntries = getPreset(config, presetName);
+    const presetEntries = presetNames.flatMap((name) => getPreset(config, name));
     log.debug(`project ${projectRoot}, preset "${presetName}" (${presetEntries.length} entries)`);
 
     // ── Talk to the IDE ──────────────────────────────────────────────────────
