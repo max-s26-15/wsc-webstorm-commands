@@ -165,6 +165,7 @@ a new IDE build can need a fresh build of it. The plugin declares `since-build 2
 | --- | --- |
 | `wsc` | launches the default preset |
 | `wsc test:watch:debug test` | preset + extra names; the command line overrides the mode |
+| `wsc test:watch:terminal` | that one configuration in an IDE Terminal tab, without a debugger (see [`:terminal`](#a-terminal-tab-for-one-entry-terminal)) |
 | `-c`, `--configure` | interactive screen for choosing what the preset holds |
 | `-l`, `--list` | print every run configuration the project has |
 | `--preset <name> [<name> ...]` | use a different named preset, or launch several at once (`--preset a b`, or repeat the flag) |
@@ -236,7 +237,7 @@ test:coverage  run    (preset)
 
 Drop `--dry-run` and the two Run tabs really open, in that order. `wsc -c` is the
 interactive screen that writes the file: a checkbox list of everything the IDE reports, with
-the current preset pre-checked, followed by a run/debug question for each newly checked
+the current preset pre-checked, followed by a run/debug/terminal question for each newly checked
 entry only.
 
 ## `--preset <name>`
@@ -292,6 +293,40 @@ test:watch     debug  (cli)
 → execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--inspect-brk=127.0.0.1:9400" npm run test:coverage
 → execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--inspect-brk=127.0.0.1:9401" npm run test:watch
 ```
+
+## A Terminal tab for one entry (`:terminal`)
+
+`run`, `debug` and `terminal` are the three modes an entry can have. `:terminal` starts that one
+configuration as a command line in a new **IDE Terminal tab** — no debugger, no inspector port —
+while the other entries of the same launch keep their own tab kind. It is what
+[`--target=terminal`](#--targetterminal) does for the whole run, chosen per entry instead, so it can
+also be kept in a preset:
+
+```json
+"default": [
+  { "name": "test", "mode": "run" },
+  { "name": "test:watch", "mode": "terminal" }
+]
+```
+
+`wsc test:watch:terminal` asks for the same on the command line, and `wsc -c` offers it as the third
+answer of the mode question. The header of a plan that mixes tab kinds reads
+`via run-window + terminal`, and the `--dry-run` lines show `execute_terminal_command` for exactly
+the entries that use the Terminal. The two knobs combine like this: `:terminal` on an entry keeps it
+in the Terminal even under `--target=run-window`, and `--target=terminal` puts a `:debug` entry in the
+Terminal too — as the same inspector-enabled command `:debug` uses without the plugin
+(`NODE_OPTIONS=… --inspect-brk=…`, with an inspector port of its own), not as a Debug tab. `:terminal`
+is the one that has no debugger at all.
+
+Every Terminal tab — `:terminal`, `--target=terminal`, and `:debug` without the plugin — is a **new
+tab of its own, titled with the name of the configuration** it runs (`test:watch`, not `wsc`). The
+IDE's MCP tool has no parameter for a tab title, but it titles a tab after the MCP client that opened
+it, so `wsc` opens one short-lived session per tab, called by the configuration's name. If such a
+session cannot be opened the launch still happens, and `wsc` warns — once — that the tabs are titled `wsc`.
+
+Without the IDE (`--fallback=terminal`) every tab is already an OS terminal, so `:terminal` there is
+the same launch as `:run`. A preset that contains `"mode": "terminal"` is not readable by a `wsc`
+built before this mode existed: it stops with an error naming the file rather than guessing.
 
 ## `--target=terminal`
 
@@ -385,11 +420,11 @@ error: "tes" matches several run configurations: test, test:coverage, test:watch
 
 Resolution is atomic: a typo in the third name means none of the first two is launched.
 
-A trailing `:run` / `:debug` sets the mode — unless the whole token is itself a
+A trailing `:run` / `:debug` / `:terminal` sets the mode — unless the whole token is itself a
 configuration name. That is why `wsc test:watch` launches the `test:watch` configuration, while
 `wsc test:watch:debug` debugs it: the token is checked against the names the IDE reported first,
 and only then is the last `:debug` cut off. Use `name:debug:debug` to debug a configuration whose
-name really does end in `:debug`.
+name really does end in `:debug` (likewise `name:terminal:terminal` for `:terminal`).
 
 ## Exit codes
 
@@ -422,7 +457,7 @@ not atomic, because by then the user has already been told what is coming.
 - **The plugin is tied to the IDE build.** It extends an MCP API that JetBrains does not document as
   stable: rebuild it after a WebStorm update (see [Updating](#updating)).
 - **A configuration WebStorm has not saved yet gets a guessed command line.**
-  `--target=terminal` and the Terminal route of `:debug` need a shell command, and
+  `--target=terminal`, `:terminal` and the Terminal route of `:debug` need a shell command, and
   `get_run_configurations` reports only a name and a type — so the real definition is read out of
   `.idea/` instead. A configuration created minutes ago may not be written there yet; that one
   falls back to rebuilding the command from its name (`test` → `npm run test`), which can be wrong.
@@ -430,7 +465,7 @@ not atomic, because by then the user has already been told what is coming.
   before anything starts. Native Run/Debug tabs (the default, and `:debug` with the plugin) are
   never affected: the IDE launches those itself, from the name.
 - **Only npm and Node.js configurations can be rebuilt as a command line.** Anything else
-  is refused rather than guessed at, on both the `--target=terminal` and the no-IDE paths.
+  is refused rather than guessed at, on both the `--target=terminal` (and `:terminal`) and the no-IDE paths.
 - **Without the plugin, `:debug` on an npm configuration debugs npm, not your application.** The
   inspector is asked for through `NODE_OPTIONS`, which every `node` in the tree inherits — and the
   first one is npm's own CLI, so it takes the port and stops there. Wrappers that spawn a second

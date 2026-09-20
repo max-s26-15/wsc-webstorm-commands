@@ -63,7 +63,7 @@ const pkg = require('../package.json');
 const HELP = `wsc — run WebStorm run configurations in one command
 
 Usage:
-  wsc [options] [configuration[:run|:debug] ...]
+  wsc [options] [configuration[:run|:debug|:terminal] ...]
 
 Options:
   -c, --configure       pick which configurations launch by default, and how
@@ -82,19 +82,24 @@ Options:
 
 Examples:
   wsc                                 launch the default preset
-  wsc web:debug api              preset plus two more, web in debug mode
+  wsc web:debug api                   preset plus two more, web in debug mode
   wsc --list                          print every configuration the IDE knows about
   wsc --preset backend --dry-run      show what the "backend" preset would launch
-  wsc --target=terminal web       launch web in a Terminal tab instead
+  wsc web:terminal api                web in a Terminal tab, api in the Run window
+  wsc --target=terminal web           launch everything in Terminal tabs instead
   wsc -c                              edit the default preset interactively
-  wsc --fallback=retry web        wait for WebStorm to come up, then launch
-  wsc --fallback=terminal web     launch in OS terminal tabs, without WebStorm
+  wsc --fallback=retry web            wait for WebStorm to come up, then launch
+  wsc --fallback=terminal web         launch in OS terminal tabs, without WebStorm
 
 :debug opens a real Debug tab when the wsc IDE plugin is installed (see ide-plugin/README.md).
 Without it the IDE's MCP API has no debug parameter, so the command runs in a Terminal tab
 rebuilt with --inspect-brk, and each :debug entry gets its own inspector port, counting up
 from ${DEBUG_PORT_BASE} — attach WebStorm to the port wsc prints for it. --target=terminal
 always takes that Terminal route.
+
+:terminal starts one configuration in a new IDE Terminal tab, without a debugger — the same
+launch --target=terminal gives every entry, chosen per entry (and storable in a preset).
+Only npm and Node.js configurations can be rebuilt as a command line for it.
 
 Without the IDE (--fallback=terminal), wsc opens one OS terminal tab per configuration —
 gnome-terminal, konsole, Terminal.app or Windows Terminal, whichever is installed — and
@@ -280,6 +285,7 @@ async function hasDebugTool(client, log) {
  *   client: import('./mcp/client.js').McpClient,
  *   log: ReturnType<typeof createLogger>,
  *   calls: import('./exec/planBuilder.js').McpCall[],
+ *   connectAs?: (name: string) => Promise<import('./mcp/client.js').McpClient>,
  * }} ctx
  * @returns {Promise<number>}
  */
@@ -715,7 +721,12 @@ async function run(argv, deps) {
             );
         }
 
-        log.info(`${values['dry-run'] ? 'would launch' : 'launching'} ${plan.length} configuration(s) via ${target}:`);
+        // Under run-window, a :terminal entry is the one place the header would otherwise be
+        // untrue; --target=terminal already says the whole run is a terminal run.
+        const via = target === 'run-window' && plan.some((entry) => entry.mode === 'terminal')
+            ? `${target} + terminal`
+            : target;
+        log.info(`${values['dry-run'] ? 'would launch' : 'launching'} ${plan.length} configuration(s) via ${via}:`);
         log.out(formatPlan(plan));
         const notes = executionNotes(calls);
         for (const note of notes) log.warn(note);
@@ -741,6 +752,10 @@ async function run(argv, deps) {
 
         // The MCP session is still open here, and stays open until this promise settles:
         // see withMcpSession().
-        return (deps.executePlan ?? executePlan)(plan, { client, log, calls });
+        // A Terminal tab is titled after the MCP client that opened it, so each one gets a
+        // session called by its configuration's name — see runExecutionPlan().
+        const connectAs = (/** @type {string} */ name) =>
+            (deps.connectMcp ?? connectMcp)(reached.port, { projectPath: projectRoot, clientName: name, log });
+        return (deps.executePlan ?? executePlan)(plan, { client, log, calls, connectAs });
     });
 }

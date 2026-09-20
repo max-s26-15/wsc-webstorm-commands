@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import { runCli } from '../src/cli.js';
 import { formatRunConfigs } from '../src/list.js';
-import { fakeCliDeps } from '../test-utils/fake-cli-deps.js';
+import { FIXTURE, fakeCliDeps } from '../test-utils/fake-cli-deps.js';
 import { tmpIdeaProject, tmpProject } from '../test-utils/tmp-dir.js';
 
 /**
@@ -40,6 +40,7 @@ async function wsc(argv, opts = {}) {
             stderr: h.stderr(),
             output: h.output(),
             executed: h.executed,
+            contexts: h.executeContexts,
             configured: h.configured,
             fellBack: h.fellBack,
             calls: h.calls,
@@ -467,6 +468,102 @@ describe('flag table — --dry-run', () => {
         );
         assert.match(result.stderr, /^would launch 3 configuration\(s\) via run-window:$/m);
         assert.deepEqual(result.executed, [], 'a dry run must never reach the execution seam');
+    });
+
+    test(':terminal opens a Terminal tab for that entry only, and says so in the header', async () => {
+        const result = await wsc(['--dry-run', 'shared', 'web:terminal'], { idea: true });
+
+        assert.equal(result.code, 0);
+        // The command line itself is read off .idea/ (and may carry a PATH= for the
+        // project's .nvmrc, which depends on this machine), so only its shape is pinned.
+        const [shared, web, runCall, terminalCall, ...rest] = result.stdout.split('\n');
+        assert.equal(shared, 'shared  run       (cli)');
+        assert.equal(web, 'web     terminal  (cli)');
+        assert.equal(runCall, '→ execute_run_configuration  shared');
+        assert.match(terminalCall, /^→ execute_terminal_command {3}cd web && .*npm run dev$/);
+        assert.deepEqual(rest, ['']);
+        assert.match(result.stderr, /^would launch 2 configuration\(s\) via run-window \+ terminal:$/m);
+        assert.doesNotMatch(result.stderr, /inspector|debug/i, 'nothing was rerouted, so nothing is announced');
+        assert.deepEqual(result.executed, [], 'a dry run must never reach the execution seam');
+    });
+
+    test('each Terminal tab is titled after its configuration: the launch gets a session of that name', async () => {
+        // The IDE titles a tab after the MCP client that opened it (see connectMcp), so the
+        // launch is handed a way to open one session per tab, each called by the entry's name.
+        const result = await wsc(['shared', 'web:terminal', 'api:terminal'], { idea: true });
+
+        assert.equal(result.code, 0);
+        const [ctx] = result.contexts;
+        assert.deepEqual(ctx.calls.map((call) => call.tabName), [undefined, 'web', 'api']);
+
+        await ctx.connectAs('web');
+        const named = result.calls.filter((c) => c.type === 'connect' && c.clientName !== undefined);
+        assert.deepEqual(named.map((c) => c.clientName), ['web']);
+        assert.equal(named[0].port, 64542, 'the same MCP Server as the shared session');
+        assert.ok(named[0].projectPath, 'and the same project — the IDE needs it on every session');
+    });
+
+    test('the real executePlan opens one session per Terminal tab, named after it, and closes each', async () => {
+        // The seam is *not* replaced here: only connectMcp is fake, so this walks
+        // run() -> executePlan -> runExecutionPlan -> connectAs -> connectMcp for real.
+        const project = await tmpIdeaProject({});
+        try {
+            const opened = [];
+            const h = fakeCliDeps({
+                cwd: project.dir,
+                callTool: (name) => (name === 'get_run_configurations' ? FIXTURE : 'ok'),
+            });
+            delete h.deps.executePlan;
+            const shared = h.deps.connectMcp;
+            h.deps.connectMcp = async (port, connectOpts) => {
+                const session = await shared(port, connectOpts);
+                if (connectOpts?.clientName !== undefined) {
+                    opened.push({ name: connectOpts.clientName, closed: false });
+                    const entry = opened[opened.length - 1];
+                    return { ...session, close: async () => { entry.closed = true; } };
+                }
+                return session;
+            };
+
+            const code = await runCli(['shared', 'web:terminal', 'api:terminal'], h.deps);
+
+            assert.equal(code, 0, h.output());
+            assert.deepEqual(opened.map((s) => s.name), ['web', 'api'], 'one session per Terminal tab, none for the Run window');
+            assert.ok(opened.every((s) => s.closed), 'each is closed once its tab has been asked for');
+            const tools = h.calls.filter((c) => c.type === 'call').map((c) => c.name);
+            assert.deepEqual(tools.filter((t) => t !== 'get_run_configurations'), [
+                'execute_run_configuration', 'execute_terminal_command', 'execute_terminal_command',
+            ]);
+        } finally {
+            await project.cleanup();
+        }
+    });
+
+    test('a preset entry with mode terminal launches the same way as :terminal', async () => {
+        const result = await wsc(['--dry-run'], {
+            idea: true,
+            config: withPresets({ default: [{ name: 'shared' }, { name: 'web', mode: 'terminal' }] }),
+        });
+
+        assert.equal(result.code, 0);
+        assert.match(result.stdout, /→ execute_terminal_command +cd web && .*npm run dev$/m);
+        assert.match(result.stderr, /via run-window \+ terminal:$/m);
+    });
+
+    test('--target=terminal alone keeps the plain header: the whole run is already a terminal run', async () => {
+        const result = await wsc(['--dry-run', '--target=terminal', 'web:terminal'], { idea: true });
+
+        assert.equal(result.code, 0);
+        assert.match(result.stderr, /via terminal:$/m);
+    });
+
+    test(':terminal on a configuration that cannot be a command is refused before anything is printed', async () => {
+        const result = await wsc(['--dry-run', 'shared', 'Repro: Stale Job Cleanup:terminal']);
+
+        assert.equal(result.code, 1);
+        assert.equal(result.stdout, '');
+        assert.match(result.output, /Node\.js/);
+        assert.match(result.output, /Use :run/);
     });
 
     test('--debug-port moves the inspector port the plan prints', async () => {

@@ -336,4 +336,15 @@ describe('formatPlan', () => {
         assert.match(lines[0], /^web {20}debug {2}\(preset\)$/);
         assert.match(lines[1], /^client > bundle:build {2}run {4}\(cli\)$/);
     });
+
+    test('a terminal entry widens the mode column instead of running into the source', () => {
+        const plan = buildLaunchPlan({
+            configs: CONFIGS,
+            preset: [{ name: 'web', mode: 'terminal' }],
+            requests: [{ name: 'api', mode: 'run' }],
+        });
+        const lines = formatPlan(plan).split('\n');
+        assert.equal(lines[0], 'web  terminal  (preset)');
+        assert.equal(lines[1], 'api  run       (cli)');
+    });
 });

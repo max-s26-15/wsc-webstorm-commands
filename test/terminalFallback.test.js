@@ -36,7 +36,7 @@ const CONFIGS = [
 /**
  * @param {object} [opts]
  * @param {string[]} [opts.positionals]
- * @param {{ name: string, mode: 'run' | 'debug' }[]} [opts.presetEntries]
+ * @param {{ name: string, mode: import('../src/modes.js').LaunchMode }[]} [opts.presetEntries]
  * @param {any[] | null} [opts.configs] - null means "the IDE saved nothing"
  * @param {boolean} [opts.dryRun]
  * @param {number} [opts.debugPortBase]
@@ -164,6 +164,27 @@ describe('runTerminalFallback — refusing before anything starts', () => {
             () => run({ positionals: ['web:debug', 'api:debug'], debugPortBase: 65535 }),
             (err) => err.name === 'UsageError' && /past the highest port there is/.test(err.message),
         );
+    });
+});
+
+describe('runTerminalFallback — terminal entries', () => {
+    test(':terminal is the same launch as :run here: every tab is already an OS terminal', async () => {
+        const { opened } = await run({ positionals: ['web:terminal', 'api'] });
+
+        assert.equal(opened[0].tabs[0].mode, 'terminal');
+        assert.equal(opened[0].tabs[0].command, 'cd web && npm run dev');
+        assert.equal(opened[0].tabs[0].debugPort, undefined);
+        assert.doesNotMatch(opened[0].tabs[0].command, /inspect/);
+    });
+
+    test('a terminal entry between two debug ones does not consume a port', async () => {
+        const { opened } = await run({ positionals: ['web:debug', 'api:terminal', 'addon-client:debug'] });
+        assert.deepEqual(opened[0].tabs.map((tab) => tab.debugPort), [9229, undefined, 9230]);
+    });
+
+    test('it says nothing about debugging', async () => {
+        const { err } = await run({ positionals: ['web:terminal'] });
+        assert.doesNotMatch(err, /inspect-brk|Nothing attaches/);
     });
 });
 

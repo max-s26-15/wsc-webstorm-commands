@@ -26,7 +26,7 @@ import { findTerminal, openTerminalTabs } from './terminalTabs.js';
 
 /**
  * @typedef {import('./terminalTabs.js').TabSpec & {
- *   mode: 'run' | 'debug',
+ *   mode: import('../modes.js').LaunchMode,
  *   debugPort?: number,
  * }} FallbackTab
  */

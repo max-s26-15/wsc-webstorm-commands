@@ -182,6 +182,53 @@ exercises it.
   options object instead, like `buildLaunchPlan` next door. Building is **atomic**, same as plan building:
   an entry that cannot be expressed as a command throws `UnsupportedLaunchError` before a single call is
   issued.
+- **`:terminal` is a third *mode*, per entry — not a new `--target`.** `src/modes.js` is the one place the
+  list `['run', 'debug', 'terminal']` and `DEFAULT_MODE` are spelled; `args.js`, `presets/store.js` and
+  `ui/configureLogic.js` re-export them and `ui/configure.js` builds its `select()` choices from them, so
+  the command line, the preset file and the `--configure` screen cannot drift (before that, `MODES` was
+  duplicated in two files and the `'run' | 'debug'` literal in ten JSDoc types; `test/modes.test.js` pins
+  the identity). `--target=terminal` is the same launch for the *whole run* and stays a separate flag:
+  `usesTerminal(entry, target, {debugTool})` is `target === 'terminal' || mode === 'terminal' ||
+  (mode === 'debug' && !debugTool)`, so a terminal entry takes the existing `.idea/`-backed `commandFor`
+  path and needs no new machinery. It gets **no inspector port and no reroute note** (nothing is debugged
+  and nothing was rerouted behind the user's back), which is why `debugSeen` counts `debug` entries only.
+  Three seams that were easy to miss: `formatPlan()` pads the mode column to `max(5, longest mode)` — a
+  fixed 8 would have re-aligned every pinned `--dry-run` text, and 5 would run `terminal` into the source;
+  the launch header says `via run-window + terminal` for a mixed plan (it was untrue otherwise);
+  `terminalEscapeHint('terminal')` names `:run`, because "drop `--target=terminal`" is advice that does
+  nothing for an entry that asked for the terminal itself. On the no-IDE path every tab is already an OS
+  terminal, so `:terminal` there **is** `:run` (`buildFallbackCommand` only ever special-cased `debug`);
+  pinned by `runTerminalFallback — terminal entries`. The schema version stays 1: an older `wsc` reading
+  `mode: "terminal"` stops with a `PresetConfigError` naming the file, which is the store's rule anyway.
+  In `test/cli.integration.test.js` the terminal command line is matched by shape, not text — it may carry
+  a `PATH=` for the project's `.nvmrc`, which depends on the machine.
+- **A Terminal tab is titled after the MCP *client* that opened it — so each one gets its own session.**
+  `execute_terminal_command` has no tab-name parameter (schema read from the live IDE). Measured on
+  WebStorm 2026.2.1: three calls from a client called `wsc` gave three tabs titled `wsc`; sessions called
+  `probe-alpha` / `probe-beta` gave tabs with those titles; and printing a title escape sequence from the
+  command (`printf '\033]0;name\007'`) changed nothing. So `buildExecutionPlan()` puts `tabName =
+  entry.name` on every terminal call (`--target=terminal`, `:terminal`, and `:debug` without the plugin),
+  and `runExecutionPlan()` makes such a call over `opts.connectAs(name)` — `connectMcp(port, {clientName})`,
+  wired in `run()` — closed straight after in a `finally` (the `await` on the call is inside the `try`, the
+  trap `withMcpSession()` documents). What was measured about closing is that the *command* keeps running
+  (a file touched eight seconds after its session was closed still appeared); that the *tab* stays open
+  and keeps its title after `close()` was **not** measured — it needs one live, non-dry-run launch
+  (`wsc <name>:terminal`, then look at the IDE), and until someone has done that the feature rests on it.
+  A bounded call now ends with a `close()` where it used to leave the session open. `close()` does not
+  send the Streamable-HTTP session `DELETE` (`terminateSession()` is never called), so the IDE keeps each
+  short-lived server-side session until it expires it — one per Terminal tab instead of one per run.
+  A session that cannot be opened is **not** a failed launch — it falls back to the shared session with a
+  warning that the tab will be titled `wsc`, because the name is a nicety and the command is the point.
+  That refusal is remembered for the rest of the run (`naming` in `runExecutionPlan()`): one warning, and
+  no further attempts, each of which would cost a connect timeout of up to ten seconds per tab. The same measurement showed the tab is
+  separate per call, which is what `reuseExistingTerminalWindow: false` was already for. Only Terminal
+  calls pay for the extra handshake; Run-window and Debug-tool calls keep the shared session. The OS
+  terminal adapters already titled their tabs (`--title`, `tabtitle=`, AppleScript), so the no-IDE path
+  needed nothing. Pinned by `runExecutionPlan — one named session per Terminal tab`, `connectMcp` "introduces
+  itself as …" (reads the `initialize` body off a real socket) and the `tabName` block in
+  `test/planBuilder.test.js`; `test/cli.integration.test.js` checks the wiring against the real `executePlan()` — only `connectMcp` is
+  fake there — and the abort path (a transport error still closes the session that carried it) is pinned in
+  `test/execute.test.js`.
 - **`ide-plugin/` — the optional WebStorm plugin that makes `:debug` a real Debug tab.** A small Kotlin plugin
   (Gradle + IntelliJ Platform Gradle Plugin, built against the installed IDE — see `ide-plugin/README.md`) that
   registers one MCP tool, `debug_run_configuration(configurationName)`, which starts the configuration with

@@ -31,6 +31,25 @@ describe('splitNameMode — plain names', () => {
         assert.deepEqual(splitNameMode('web:run'), { name: 'web', mode: 'run' });
     });
 
+    test('splits an explicit :terminal suffix', () => {
+        assert.deepEqual(splitNameMode('web:terminal'), { name: 'web', mode: 'terminal' });
+    });
+
+    test('a known name that ends in :terminal is not split', () => {
+        const isKnownName = (token) => token === 'api > repro:stale-job:terminal';
+        assert.deepEqual(splitNameMode('api > repro:stale-job:terminal', { isKnownName }), {
+            name: 'api > repro:stale-job:terminal',
+            mode: 'run',
+        });
+    });
+
+    test('name:terminal:terminal is the escape hatch for a name ending in :terminal', () => {
+        assert.deepEqual(splitNameMode('stale-job:terminal:terminal'), {
+            name: 'stale-job:terminal',
+            mode: 'terminal',
+        });
+    });
+
     test('the default mode is run', () => {
         assert.equal(DEFAULT_MODE, 'run');
     });

@@ -205,6 +205,10 @@ function describeMode(call) {
  * @param {McpCall[]} calls - from buildExecutionPlan()
  * @param {object} opts
  * @param {McpClient} opts.client
+ * @param {(name: string) => Promise<McpClient>} [opts.connectAs] - opens a session that
+ *   calls itself `name`. A call with a `tabName` is made over one of these, because the IDE
+ *   titles a Terminal tab after the MCP client that opened it and offers no other way to
+ *   name it. Without it every call shares `client`, and the tabs are all titled "wsc".
  * @param {{ info: (...a: any[]) => void, error: (...a: any[]) => void, warn: (...a: any[]) => void, debug: (...a: any[]) => void }} [opts.log]
  * @returns {Promise<ExecutionReport>}
  */
@@ -216,10 +220,16 @@ export async function runExecutionPlan(calls, opts) {
     const started = [];
     /** @type {LaunchFailure[]} */
     const failed = [];
+    /** Shared by every sessionFor() of this run, so a refusal is learned once. */
+    const naming = { unavailable: false };
 
     for (const call of calls) {
+        // Opened per tab and closed straight after: the command keeps running once the
+        // session is gone (measured — a file touched eight seconds after the session was
+        // closed still appeared), and only the name matters.
+        const session = await sessionFor(call, opts, log, naming);
         try {
-            const result = await client.callTool(call.tool, call.arguments, { timeoutMs: call.timeoutMs });
+            const result = await session.callTool(call.tool, call.arguments, { timeoutMs: call.timeoutMs });
             log.debug(`${call.tool} → ${typeof result === 'string' ? result : JSON.stringify(result)}`);
 
             const reason = launchFailureReason(result);
@@ -253,8 +263,42 @@ export async function runExecutionPlan(calls, opts) {
             }
             failed.push({ call, reason: toolError.detail });
             log.error(`${call.name}: ${toolError.detail}`);
+        } finally {
+            // `await` on the call above is inside this try, so this never runs while it is
+            // still in flight — the trap withMcpSession() in src/cli.js documents.
+            if (session !== client) await session.close().catch(() => {});
         }
     }
 
     return { started, failed };
+}
+
+/**
+ * The session one call is made over: its own, named after the tab, or the shared one.
+ *
+ * A failure to open a named session is not a failure to launch. The name is a nicety and
+ * the command is the point, so the call falls back to the shared session — and says the
+ * tab will carry the wrong title, rather than doing it silently.
+ *
+ * The first failure is remembered in `naming`: an IDE that would not open one session will
+ * not open the next either, and asking again costs a connect timeout per tab (up to ten
+ * seconds each) plus one identical warning per tab. Later tabs go straight to the shared
+ * session and the run says so once.
+ *
+ * @param {McpCall} call
+ * @param {{ client: McpClient, connectAs?: (name: string) => Promise<McpClient> }} opts
+ * @param {{ warn: (...a: any[]) => void }} log
+ * @param {{ unavailable: boolean }} naming - per-run state, owned by runExecutionPlan()
+ * @returns {Promise<McpClient>}
+ */
+async function sessionFor(call, opts, log, naming) {
+    if (call.tabName === undefined || opts.connectAs === undefined || naming.unavailable) return opts.client;
+    try {
+        return await opts.connectAs(call.tabName);
+    } catch (err) {
+        naming.unavailable = true;
+        const why = err instanceof Error ? err.message : String(err);
+        log.warn(`could not open a session named "${call.tabName}" (${why}); its tab will be titled "wsc", and so will every later one`);
+        return opts.client;
+    }
 }

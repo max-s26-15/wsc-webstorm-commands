@@ -7,11 +7,10 @@
  */
 import { parseArgs } from 'node:util';
 
-/** Launch modes a positional token may request. */
-export const MODES = /** @type {const} */ (['run', 'debug']);
+import { DEFAULT_MODE, MODES } from './modes.js';
 
-/** Mode used when a token names a configuration without a suffix. */
-export const DEFAULT_MODE = 'run';
+// Re-exported so existing importers keep working; the list itself lives in modes.js.
+export { DEFAULT_MODE, MODES };
 
 /**
  * The flags `wsc` accepts — the final set, fixed in phase 9.
@@ -86,7 +85,7 @@ export class UsageError extends Error {
 }
 
 /**
- * @typedef {{ name: string, mode: 'run' | 'debug' }} RunRequest
+ * @typedef {{ name: string, mode: import('./modes.js').LaunchMode }} RunRequest
  */
 
 /**
@@ -116,7 +115,7 @@ export function splitNameMode(token, opts = {}) {
     const suffix = token.slice(colon + 1);
     if (!MODES.includes(/** @type {any} */ (suffix))) return { name: token, mode: DEFAULT_MODE };
 
-    return { name: token.slice(0, colon), mode: /** @type {'run' | 'debug'} */ (suffix) };
+    return { name: token.slice(0, colon), mode: /** @type {import('./modes.js').LaunchMode} */ (suffix) };
 }
 
 /**

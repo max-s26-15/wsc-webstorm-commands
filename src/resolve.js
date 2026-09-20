@@ -9,9 +9,9 @@
 
 /**
  * @typedef {{ name: string, description?: string, supportsDynamicLaunchOverrides?: boolean }} RunConfigInfo
- * @typedef {{ name: string, mode: 'run' | 'debug' }} RunRequest
+ * @typedef {{ name: string, mode: import('./modes.js').LaunchMode }} RunRequest
  * @typedef {'preset' | 'cli'} PlanSource
- * @typedef {{ name: string, mode: 'run' | 'debug', config: RunConfigInfo, source: PlanSource }} PlanEntry
+ * @typedef {{ name: string, mode: import('./modes.js').LaunchMode, config: RunConfigInfo, source: PlanSource }} PlanEntry
  */
 
 /** How close a name must be to be offered as "did you mean". */
@@ -241,7 +241,10 @@ export function formatPlan(plan) {
     if (plan.length === 0) return 'nothing to launch';
 
     const width = Math.max(...plan.map((entry) => entry.name.length));
+    // 5 is `debug`, the longest mode before `terminal` existed: a plan without one keeps its
+    // exact old alignment, and one with it widens the column rather than run into the source.
+    const modeWidth = Math.max(5, ...plan.map((entry) => entry.mode.length));
     return plan
-        .map((entry) => `${entry.name.padEnd(width)}  ${entry.mode.padEnd(5)}  (${entry.source})`)
+        .map((entry) => `${entry.name.padEnd(width)}  ${entry.mode.padEnd(modeWidth)}  (${entry.source})`)
         .join('\n');
 }

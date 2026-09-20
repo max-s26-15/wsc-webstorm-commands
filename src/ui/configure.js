@@ -7,6 +7,7 @@
  */
 import { checkbox, select } from '@inquirer/prompts';
 
+import { DEFAULT_MODE, MODES } from '../modes.js';
 import { hasPreset, setPreset, writePresets } from '../presets/store.js';
 import { applyAnswersToPreset, buildInitialSelection, diffPreset, pendingModeQuestions } from './configureLogic.js';
 import { CANCELLED_EXIT_CODE, isCancelled } from './promptCancel.js';
@@ -25,7 +26,7 @@ const PAGE_SIZE = 20;
  * so JSDoc keeps a concrete shape instead of a bare `object`.
  * @typedef {{
  *   checkbox: (config: any) => Promise<string[]>,
- *   select: (config: any) => Promise<'run' | 'debug'>,
+ *   select: (config: any) => Promise<import('../modes.js').LaunchMode>,
  * }} Prompts
  */
 
@@ -90,17 +91,15 @@ export async function runConfigure(opts) {
 
     // Null prototype: a configuration named "__proto__" would otherwise hit the
     // prototype setter here and lose its answer silently.
-    /** @type {Record<string, 'run' | 'debug'>} */
+    /** @type {Record<string, import('../modes.js').LaunchMode>} */
     const modes = Object.create(null);
     try {
         for (const name of pendingModeQuestions(selection, before)) {
             modes[name] = await prompts.select({
                 message: `Mode for "${name}"`,
-                choices: [
-                    { name: 'run', value: 'run' },
-                    { name: 'debug', value: 'debug' },
-                ],
-                default: 'run',
+                // Built from MODES so a mode added there cannot be missing from this screen.
+                choices: MODES.map((mode) => ({ name: mode, value: mode })),
+                default: DEFAULT_MODE,
             });
         }
     } catch (err) {

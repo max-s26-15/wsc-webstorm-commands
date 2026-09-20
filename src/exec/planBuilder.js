@@ -26,14 +26,19 @@ import { debugConfigurationCall, runConfigurationCall, terminalCommandCall } fro
  * @typedef {'run-window' | 'terminal'} ExecTarget
  * @typedef {{
  *   name: string,
- *   mode: 'run' | 'debug',
+ *   mode: import('../modes.js').LaunchMode,
  *   tool: string,
  *   arguments: Record<string, unknown>,
  *   timeoutMs?: number,
  *   note?: string,
  *   debugPort?: number,
  *   commandSource?: CommandSource,
+ *   tabName?: string,
  * }} McpCall
+ *
+ * `tabName` is set on a Terminal call only: what the IDE should title that tab. The tool
+ * has no parameter for it, so the runner puts the call on a session of that name instead
+ * (see runExecutionPlan).
  *
  * Where the shell command line behind a terminal call came from.
  *   'idea' — read out of what WebStorm saved to .idea/, so it is the real definition.
@@ -194,20 +199,22 @@ const SHELL_SAFE = /^[A-Za-z0-9._:@/+-]+$/;
  * it. Its own default — "start the MCP Server" — is the right advice only on the no-IDE
  * path, and would be nonsense here, where the IDE is answering.
  *
- * @param {'run' | 'debug'} mode
+ * @param {import('../modes.js').LaunchMode} mode
  * @returns {string} one indented line, ready to follow a message
  */
 export function terminalEscapeHint(mode) {
-    return mode === 'debug'
-        ? '  Run it without :debug, or name a configuration that already starts a debugger.'
-        : '  Drop --target=terminal to launch it in the IDE\'s Run window.';
+    if (mode === 'debug') return '  Run it without :debug, or name a configuration that already starts a debugger.';
+    // :terminal is the entry's own choice, so dropping the flag would not help: :run is what
+    // asks for the Run window (and a --target=terminal on the command line would still win).
+    if (mode === 'terminal') return '  Use :run, without --target=terminal, to launch it in the IDE\'s Run window.';
+    return '  Drop --target=terminal to launch it in the IDE\'s Run window.';
 }
 
 /** A configuration this CLI cannot express as a shell command line. */
 export class UnsupportedLaunchError extends Error {
     /**
      * @param {RunConfigInfo} config
-     * @param {'run' | 'debug'} mode
+     * @param {import('../modes.js').LaunchMode} mode
      */
     constructor(config, mode) {
         const kind = config.description ? `a "${config.description}" configuration` : 'of an unknown type';
@@ -269,7 +276,7 @@ export function splitNpmConfigName(name) {
  * knowable from here, and guessing one would launch the wrong process.
  *
  * @param {RunConfigInfo} config
- * @param {'run' | 'debug'} mode
+ * @param {import('../modes.js').LaunchMode} mode
  * @param {object} [opts]
  * @param {number} [opts.debugPort] - ignored unless mode is debug; defaults to the base,
  *   which is what a plan with a single debug entry gets anyway
@@ -290,9 +297,10 @@ export function buildTerminalCommand(config, mode, opts = {}) {
 /**
  * Whether one plan entry has to go through a shell command line rather than a Run tab.
  *
- * A `:debug` entry does — unless the IDE has the wsc plugin's debug tool, which starts the
+ * A `:terminal` entry always does: the entry asked for the Terminal window by name. So does
+ * a `:debug` entry — unless the IDE has the wsc plugin's debug tool, which starts the
  * configuration with the Debug executor itself. An explicit `--target=terminal` stays a
- * terminal launch either way: the user asked for the terminal by name.
+ * terminal launch either way, for every entry: the user asked for the terminal by name.
  *
  * Exported because the CLI has to know the same thing one step earlier: a command line is
  * the only thing that needs the run configuration's *real* definition read off disk, and
@@ -304,7 +312,7 @@ export function buildTerminalCommand(config, mode, opts = {}) {
  * @returns {boolean}
  */
 export function usesTerminal(entry, target, opts = {}) {
-    return target === 'terminal' || (entry.mode === 'debug' && !opts.debugTool);
+    return target === 'terminal' || entry.mode === 'terminal' || (entry.mode === 'debug' && !opts.debugTool);
 }
 
 /**
@@ -386,6 +394,8 @@ export function buildExecutionPlan({
         };
 
         if (built?.source !== undefined) call.commandSource = built.source;
+        // The tab is titled after the configuration it runs, not "wsc".
+        if (built !== null) call.tabName = entry.name;
         // Carried on the call so the runner can print where to attach, and so the CLI can
         // check the port before anything is launched.
         if (debugPort !== undefined) call.debugPort = debugPort;
