@@ -210,16 +210,25 @@ exercises it.
   entry.name` on every terminal call (`--target=terminal`, `:terminal`, and `:debug` without the plugin),
   and `runExecutionPlan()` makes such a call over `opts.connectAs(name)` — `connectMcp(port, {clientName})`,
   wired in `run()` — closed straight after in a `finally` (the `await` on the call is inside the `try`, the
-  trap `withMcpSession()` documents). Closing is safe: the command keeps running (a file touched eight
-  seconds after its session was closed still appeared). A session that cannot be opened is **not** a
-  failed launch — it falls back to the shared session with a warning that the tab will be titled `wsc`,
-  because the name is a nicety and the command is the point. The same measurement showed the tab is
+  trap `withMcpSession()` documents). What was measured about closing is that the *command* keeps running
+  (a file touched eight seconds after its session was closed still appeared); that the *tab* stays open
+  and keeps its title after `close()` was **not** measured — it needs one live, non-dry-run launch
+  (`wsc <name>:terminal`, then look at the IDE), and until someone has done that the feature rests on it.
+  A bounded call now ends with a `close()` where it used to leave the session open. `close()` does not
+  send the Streamable-HTTP session `DELETE` (`terminateSession()` is never called), so the IDE keeps each
+  short-lived server-side session until it expires it — one per Terminal tab instead of one per run.
+  A session that cannot be opened is **not** a failed launch — it falls back to the shared session with a
+  warning that the tab will be titled `wsc`, because the name is a nicety and the command is the point.
+  That refusal is remembered for the rest of the run (`naming` in `runExecutionPlan()`): one warning, and
+  no further attempts, each of which would cost a connect timeout of up to ten seconds per tab. The same measurement showed the tab is
   separate per call, which is what `reuseExistingTerminalWindow: false` was already for. Only Terminal
   calls pay for the extra handshake; Run-window and Debug-tool calls keep the shared session. The OS
   terminal adapters already titled their tabs (`--title`, `tabtitle=`, AppleScript), so the no-IDE path
   needed nothing. Pinned by `runExecutionPlan — one named session per Terminal tab`, `connectMcp` "introduces
   itself as …" (reads the `initialize` body off a real socket) and the `tabName` block in
-  `test/planBuilder.test.js`; `test/cli.integration.test.js` checks the wiring.
+  `test/planBuilder.test.js`; `test/cli.integration.test.js` checks the wiring against the real `executePlan()` — only `connectMcp` is
+  fake there — and the abort path (a transport error still closes the session that carried it) is pinned in
+  `test/execute.test.js`.
 - **`ide-plugin/` — the optional WebStorm plugin that makes `:debug` a real Debug tab.** A small Kotlin plugin
   (Gradle + IntelliJ Platform Gradle Plugin, built against the installed IDE — see `ide-plugin/README.md`) that
   registers one MCP tool, `debug_run_configuration(configurationName)`, which starts the configuration with

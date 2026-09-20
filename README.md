@@ -312,15 +312,17 @@ also be kept in a preset:
 `wsc test:watch:terminal` asks for the same on the command line, and `wsc -c` offers it as the third
 answer of the mode question. The header of a plan that mixes tab kinds reads
 `via run-window + terminal`, and the `--dry-run` lines show `execute_terminal_command` for exactly
-the entries that use the Terminal. `:debug` wins over `--target=terminal`, and `:terminal` wins over
-`--target=run-window`; there is no combined "debug in a terminal you chose" — that is what `:debug`
-without the plugin already is.
+the entries that use the Terminal. The two knobs combine like this: `:terminal` on an entry keeps it
+in the Terminal even under `--target=run-window`, and `--target=terminal` puts a `:debug` entry in the
+Terminal too — as the same inspector-enabled command `:debug` uses without the plugin
+(`NODE_OPTIONS=… --inspect-brk=…`, with an inspector port of its own), not as a Debug tab. `:terminal`
+is the one that has no debugger at all.
 
 Every Terminal tab — `:terminal`, `--target=terminal`, and `:debug` without the plugin — is a **new
 tab of its own, titled with the name of the configuration** it runs (`test:watch`, not `wsc`). The
 IDE's MCP tool has no parameter for a tab title, but it titles a tab after the MCP client that opened
 it, so `wsc` opens one short-lived session per tab, called by the configuration's name. If such a
-session cannot be opened the launch still happens, and `wsc` warns that the tab is titled `wsc`.
+session cannot be opened the launch still happens, and `wsc` warns — once — that the tabs are titled `wsc`.
 
 Without the IDE (`--fallback=terminal`) every tab is already an OS terminal, so `:terminal` there is
 the same launch as `:run`. A preset that contains `"mode": "terminal"` is not readable by a `wsc`

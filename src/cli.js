@@ -82,14 +82,14 @@ Options:
 
 Examples:
   wsc                                 launch the default preset
-  wsc web:debug api              preset plus two more, web in debug mode
+  wsc web:debug api                   preset plus two more, web in debug mode
   wsc --list                          print every configuration the IDE knows about
   wsc --preset backend --dry-run      show what the "backend" preset would launch
-  wsc web:terminal api            web in a Terminal tab, api in the Run window
-  wsc --target=terminal web       launch everything in Terminal tabs instead
+  wsc web:terminal api                web in a Terminal tab, api in the Run window
+  wsc --target=terminal web           launch everything in Terminal tabs instead
   wsc -c                              edit the default preset interactively
-  wsc --fallback=retry web        wait for WebStorm to come up, then launch
-  wsc --fallback=terminal web     launch in OS terminal tabs, without WebStorm
+  wsc --fallback=retry web            wait for WebStorm to come up, then launch
+  wsc --fallback=terminal web         launch in OS terminal tabs, without WebStorm
 
 :debug opens a real Debug tab when the wsc IDE plugin is installed (see ide-plugin/README.md).
 Without it the IDE's MCP API has no debug parameter, so the command runs in a Terminal tab

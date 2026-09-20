@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import { runCli } from '../src/cli.js';
 import { formatRunConfigs } from '../src/list.js';
-import { fakeCliDeps } from '../test-utils/fake-cli-deps.js';
+import { FIXTURE, fakeCliDeps } from '../test-utils/fake-cli-deps.js';
 import { tmpIdeaProject, tmpProject } from '../test-utils/tmp-dir.js';
 
 /**
@@ -501,6 +501,42 @@ describe('flag table — --dry-run', () => {
         assert.deepEqual(named.map((c) => c.clientName), ['web']);
         assert.equal(named[0].port, 64542, 'the same MCP Server as the shared session');
         assert.ok(named[0].projectPath, 'and the same project — the IDE needs it on every session');
+    });
+
+    test('the real executePlan opens one session per Terminal tab, named after it, and closes each', async () => {
+        // The seam is *not* replaced here: only connectMcp is fake, so this walks
+        // run() -> executePlan -> runExecutionPlan -> connectAs -> connectMcp for real.
+        const project = await tmpIdeaProject({});
+        try {
+            const opened = [];
+            const h = fakeCliDeps({
+                cwd: project.dir,
+                callTool: (name) => (name === 'get_run_configurations' ? FIXTURE : 'ok'),
+            });
+            delete h.deps.executePlan;
+            const shared = h.deps.connectMcp;
+            h.deps.connectMcp = async (port, connectOpts) => {
+                const session = await shared(port, connectOpts);
+                if (connectOpts?.clientName !== undefined) {
+                    opened.push({ name: connectOpts.clientName, closed: false });
+                    const entry = opened[opened.length - 1];
+                    return { ...session, close: async () => { entry.closed = true; } };
+                }
+                return session;
+            };
+
+            const code = await runCli(['shared', 'web:terminal', 'api:terminal'], h.deps);
+
+            assert.equal(code, 0, h.output());
+            assert.deepEqual(opened.map((s) => s.name), ['web', 'api'], 'one session per Terminal tab, none for the Run window');
+            assert.ok(opened.every((s) => s.closed), 'each is closed once its tab has been asked for');
+            const tools = h.calls.filter((c) => c.type === 'call').map((c) => c.name);
+            assert.deepEqual(tools.filter((t) => t !== 'get_run_configurations'), [
+                'execute_run_configuration', 'execute_terminal_command', 'execute_terminal_command',
+            ]);
+        } finally {
+            await project.cleanup();
+        }
     });
 
     test('a preset entry with mode terminal launches the same way as :terminal', async () => {

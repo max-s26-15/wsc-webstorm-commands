@@ -220,12 +220,14 @@ export async function runExecutionPlan(calls, opts) {
     const started = [];
     /** @type {LaunchFailure[]} */
     const failed = [];
+    /** Shared by every sessionFor() of this run, so a refusal is learned once. */
+    const naming = { unavailable: false };
 
     for (const call of calls) {
         // Opened per tab and closed straight after: the command keeps running once the
         // session is gone (measured — a file touched eight seconds after the session was
         // closed still appeared), and only the name matters.
-        const session = await sessionFor(call, opts, log);
+        const session = await sessionFor(call, opts, log, naming);
         try {
             const result = await session.callTool(call.tool, call.arguments, { timeoutMs: call.timeoutMs });
             log.debug(`${call.tool} → ${typeof result === 'string' ? result : JSON.stringify(result)}`);
@@ -278,18 +280,25 @@ export async function runExecutionPlan(calls, opts) {
  * the command is the point, so the call falls back to the shared session — and says the
  * tab will carry the wrong title, rather than doing it silently.
  *
+ * The first failure is remembered in `naming`: an IDE that would not open one session will
+ * not open the next either, and asking again costs a connect timeout per tab (up to ten
+ * seconds each) plus one identical warning per tab. Later tabs go straight to the shared
+ * session and the run says so once.
+ *
  * @param {McpCall} call
  * @param {{ client: McpClient, connectAs?: (name: string) => Promise<McpClient> }} opts
  * @param {{ warn: (...a: any[]) => void }} log
+ * @param {{ unavailable: boolean }} naming - per-run state, owned by runExecutionPlan()
  * @returns {Promise<McpClient>}
  */
-async function sessionFor(call, opts, log) {
-    if (call.tabName === undefined || opts.connectAs === undefined) return opts.client;
+async function sessionFor(call, opts, log, naming) {
+    if (call.tabName === undefined || opts.connectAs === undefined || naming.unavailable) return opts.client;
     try {
         return await opts.connectAs(call.tabName);
     } catch (err) {
+        naming.unavailable = true;
         const why = err instanceof Error ? err.message : String(err);
-        log.warn(`could not open a session named "${call.tabName}" (${why}); its tab will be titled "wsc"`);
+        log.warn(`could not open a session named "${call.tabName}" (${why}); its tab will be titled "wsc", and so will every later one`);
         return opts.client;
     }
 }

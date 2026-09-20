@@ -242,6 +242,51 @@ describe('runExecutionPlan — one named session per Terminal tab', () => {
         assert.ok(log.lines.some((line) => /^warn: could not open a session named "api".*titled "wsc"/.test(line)), log.lines.join('\n'));
     });
 
+    test('a refusal to open a named session is learned once: one warning, no further attempts', async () => {
+        const main = mockClient();
+        const log = mockLog();
+        let attempts = 0;
+        const connectAs = async () => { attempts += 1; throw new Error('connection refused'); };
+
+        const report = await runExecutionPlan(
+            [tabCall('api', 'npm run api'), tabCall('docs', 'npm run docs'), tabCall('web', 'npm run web')],
+            { client: main.client, connectAs, log },
+        );
+
+        assert.equal(attempts, 1, 'each further attempt would cost a connect timeout');
+        assert.equal(main.calls.length, 3, 'every launch still happens, over the shared session');
+        assert.equal(report.started.length, 3);
+        assert.equal(log.lines.filter((line) => line.startsWith('warn:')).length, 1, log.lines.join('\n'));
+    });
+
+    test('a transport failure aborts the run, and the session that carried it is still closed', async () => {
+        const main = mockClient();
+        const { opened, connectAs } = namedSessions(() => {
+            throw new Error('Connection closed');
+        });
+
+        await assert.rejects(
+            runExecutionPlan([tabCall('api', 'npm run api'), tabCall('docs', 'npm run docs')], { client: main.client, connectAs }),
+            /Connection closed/,
+        );
+
+        assert.deepEqual(opened.map((s) => s.name), ['api'], 'the second tab is never attempted');
+        assert.equal(opened[0].closed, true, 'an abort must not leave the session open');
+    });
+
+    test('a bounded call that times out counts as started, and its session is closed too', async () => {
+        const main = mockClient();
+        const { opened, connectAs } = namedSessions(() => {
+            throw Object.assign(new Error('Request timed out'), { code: -32001 });
+        });
+        const call = { ...tabCall('api', 'npm run api'), timeoutMs: 1500 };
+
+        const report = await runExecutionPlan([call], { client: main.client, connectAs });
+
+        assert.equal(report.started.length, 1);
+        assert.equal(opened[0].closed, true);
+    });
+
     test('without connectAs a tabName changes nothing: the shared session is used', async () => {
         const main = mockClient();
         await runExecutionPlan([tabCall('api', 'npm run api')], { client: main.client });
