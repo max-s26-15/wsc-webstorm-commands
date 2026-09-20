@@ -351,6 +351,68 @@ describe('flag table — --preset <name>', () => {
 
         assert.deepEqual(launched(result), ['shared:run', 'api:run']);
     });
+
+    describe('several presets at once', () => {
+        const config = withPresets({
+            default: [{ name: 'docs' }],
+            backend: [{ name: 'api' }, { name: 'shared' }],
+            front: [{ name: 'web', mode: 'debug' }, { name: 'shared', mode: 'debug' }],
+        });
+
+        test('--preset a b launches both, in the order given', async () => {
+            const result = await wsc(['--preset', 'backend', 'front'], { config });
+
+            assert.equal(result.code, 0);
+            // shared is in both: it keeps backend's position and takes front's mode.
+            assert.deepEqual(launched(result), ['api:run', 'shared:debug', 'web:debug']);
+        });
+
+        test('repeating the flag means the same thing', async () => {
+            const spelled = await wsc(['--preset', 'backend', '--preset', 'front'], { config });
+            const listed = await wsc(['--preset', 'backend', 'front'], { config });
+
+            assert.deepEqual(launched(spelled), launched(listed));
+        });
+
+        test('the order typed is the order launched', async () => {
+            const result = await wsc(['--preset', 'front', 'backend'], { config });
+
+            assert.deepEqual(launched(result), ['web:debug', 'shared:run', 'api:run']);
+        });
+
+        test('a name that is not a preset stays a configuration, on top of the presets', async () => {
+            const result = await wsc(['--preset', 'backend', 'front', 'docs:debug'], { config });
+
+            assert.deepEqual(launched(result), ['api:run', 'shared:debug', 'web:debug', 'docs:debug']);
+        });
+
+        test('an unknown preset in the list is named, and nothing launches', async () => {
+            const result = await wsc(['--preset', 'backend', '--preset', 'nope'], { config });
+
+            assert.equal(result.code, 1);
+            assert.match(result.output, /unknown preset "nope" \(known presets: default, backend, front\)/);
+            assert.deepEqual(result.executed, []);
+        });
+
+        test('--dry-run says which presets it is combining', async () => {
+            const result = await wsc(['--preset', 'backend', 'front', '--dry-run'], { config });
+
+            assert.equal(result.code, 0);
+            assert.deepEqual(result.executed, []);
+            assert.match(result.stdout, /^api\s+run\s+\(preset\)$/m);
+        });
+
+        test('--configure edits one preset, so it refuses two — either spelling', async () => {
+            for (const argv of [['-c', '--preset', 'backend', 'front'], ['-c', '--preset', 'backend', '--preset', 'front']]) {
+                const result = await wsc(argv, { config });
+
+                assert.equal(result.code, 2, argv.join(' '));
+                assert.match(result.output, /--configure/);
+                assert.match(result.output, /one preset/);
+                assert.deepEqual(result.configured, []);
+            }
+        });
+    });
 });
 
 // ── --target=run-window|terminal ─────────────────────────────────────────────

@@ -167,7 +167,7 @@ a new IDE build can need a fresh build of it. The plugin declares `since-build 2
 | `wsc test:watch:debug test` | preset + extra names; the command line overrides the mode |
 | `-c`, `--configure` | interactive screen for choosing what the preset holds |
 | `-l`, `--list` | print every run configuration the project has |
-| `--preset <name>` | use a different named preset |
+| `--preset <name> [<name> ...]` | use a different named preset, or launch several at once (`--preset a b`, or repeat the flag) |
 | `--target=run-window\|terminal` | native Run/Debug tabs (default) or IDE Terminal tabs |
 | `--dry-run` | print the exact calls without launching anything |
 | `--fallback=retry\|terminal` | answer the "WebStorm is not answering" prompt in advance |

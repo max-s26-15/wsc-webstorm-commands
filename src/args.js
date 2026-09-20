@@ -26,7 +26,7 @@ export const OPTIONS = {
     version: { type: 'boolean', short: 'v' },
     configure: { type: 'boolean', short: 'c' },
     list: { type: 'boolean', short: 'l' },
-    preset: { type: 'string' },
+    preset: { type: 'string', multiple: true },
     project: { type: 'string' },
     'mcp-port': { type: 'string' },
     target: { type: 'string' },
@@ -153,7 +153,7 @@ export function parseRequests(tokens, opts = {}) {
  *   version?: boolean,
  *   configure?: boolean,
  *   list?: boolean,
- *   preset?: string,
+ *   preset?: string[],
  *   project?: string,
  *   'mcp-port'?: string,
  *   target?: string,
@@ -164,15 +164,53 @@ export function parseRequests(tokens, opts = {}) {
  */
 
 /**
+ * @typedef {{ name: string, following: number[] }} PresetUse
+ *   one `--preset <name>`, and the positionals (as indexes) that came right after it
+ */
+
+/**
  * Parse a raw argv into flags and positionals.
  *
+ * `presetUses` is what makes `--preset a b` readable: a positional token that comes
+ * *directly* after a `--preset` (and its value) might be another preset's name rather
+ * than a configuration. Only the caller knows which names are presets, so each use of
+ * the flag is returned with the indexes into `positionals` that followed it, in argv
+ * order, and the decision is left to `splitPresetNames()`.
+ *
  * @param {string[]} argv - process.argv.slice(2)
- * @returns {{ values: CliValues, positionals: string[] }}
+ * @returns {{ values: CliValues, positionals: string[], presetUses: PresetUse[] }}
  * @throws {UsageError} on an unknown or malformed flag
  */
 export function parseCliArgs(argv) {
     try {
-        return parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: true });
+        const { values, positionals, tokens } = parseArgs({
+            args: argv,
+            options: OPTIONS,
+            strict: true,
+            allowPositionals: true,
+            tokens: true,
+        });
+
+        /** @type {PresetUse[]} */
+        const presetUses = [];
+        let ordinal = 0;
+        /** @type {PresetUse | null} */
+        let current = null;
+        for (const token of tokens) {
+            if (token.kind === 'positional') {
+                current?.following.push(ordinal);
+                ordinal += 1;
+            } else if (token.kind === 'option' && token.name === 'preset') {
+                current = { name: String(token.value), following: [] };
+                presetUses.push(current);
+            } else {
+                // `--preset a --dry-run b`: the flag in between ends the run, so `b` is a
+                // configuration however it is spelled.
+                current = null;
+            }
+        }
+
+        return { values, positionals, presetUses };
     } catch (err) {
         // Every ERR_PARSE_ARGS_* code means "the user typed something wrong"; matching the
         // prefix rather than a fixed list keeps new Node codes from crashing with a stack.
@@ -182,4 +220,42 @@ export function parseCliArgs(argv) {
         }
         throw err;
     }
+}
+
+/**
+ * Every preset a command line names, for `--preset a b c` and `--preset a --preset b`.
+ *
+ * Positionals are configuration names, and `wsc --preset watch test:coverage` has always
+ * meant "the watch preset, plus test:coverage" — so a token after `--preset` is a preset
+ * name only if it *is* one, and the first that is not ends the run (`--preset a b typo`
+ * is preset a, preset b, and a configuration called "typo", which then fails as an
+ * unknown configuration instead of as a confusing unknown preset). A name that is both a
+ * preset and a configuration is read as the preset; naming the configuration before the
+ * flag (`wsc x --preset a`) or after another flag keeps it a configuration.
+ *
+ * The value of `--preset` itself is returned unchecked, so that a typo in it is reported
+ * as an unknown preset.
+ *
+ * @param {string[]} positionals
+ * @param {PresetUse[]} presetUses - from parseCliArgs()
+ * @param {(name: string) => boolean} isPreset
+ * @returns {{ presets: string[], positionals: string[] }} presets in the order typed,
+ *   and the positionals that were configurations after all
+ */
+export function splitPresetNames(positionals, presetUses, isPreset) {
+    /** @type {Set<number>} */
+    const taken = new Set();
+    /** @type {string[]} */
+    const presets = [];
+
+    for (const use of presetUses) {
+        presets.push(use.name);
+        for (const index of use.following) {
+            if (!isPreset(positionals[index])) break;
+            taken.add(index);
+            presets.push(positionals[index]);
+        }
+    }
+
+    return { presets, positionals: positionals.filter((_, index) => !taken.has(index)) };
 }
