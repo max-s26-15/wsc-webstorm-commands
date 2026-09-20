@@ -17,6 +17,7 @@ import {
     debugPortsOf,
     executionNotes,
     formatExecutionPlan,
+    needsTerminalCommands,
     shellQuote,
     splitNpmConfigName,
 } from '../src/exec/planBuilder.js';
@@ -30,12 +31,12 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
 /**
  * Resolve names the same way the CLI does, so the tests exercise real PlanEntry shapes.
  *
- * @param {...string} tokens - `name` or `name:debug`
+ * @param {...string} tokens - `name`, `name:debug` or `name:terminal`
  */
 function plan(...tokens) {
     const requests = tokens.map((token) => {
-        const debug = token.endsWith(':debug');
-        return { name: debug ? token.slice(0, -':debug'.length) : token, mode: debug ? 'debug' : 'run' };
+        const mode = ['debug', 'terminal'].find((m) => token.endsWith(`:${m}`)) ?? 'run';
+        return { name: mode === 'run' ? token : token.slice(0, -`:${mode}`.length), mode };
     });
     return buildLaunchPlan({ configs: CONFIGS, requests });
 }
@@ -290,6 +291,57 @@ describe('buildExecutionPlan — tool choice', () => {
     test('that same plan is fine under run-window — only the terminal path needs a command', () => {
         const calls = buildExecutionPlan({ plan: plan('web', 'Repro: Stale Job Cleanup') });
         assert.deepEqual(calls.map((c) => c.tool), [RUN_CONFIGURATION_TOOL, RUN_CONFIGURATION_TOOL]);
+    });
+});
+
+describe('buildExecutionPlan — the :terminal mode', () => {
+    test('a terminal entry goes through the Terminal window under the default target', () => {
+        const [call] = buildExecutionPlan({ plan: plan('web:terminal') });
+        assert.equal(call.tool, TERMINAL_TOOL);
+        assert.equal(call.arguments.command, 'npm run web');
+        assert.equal(call.arguments.reuseExistingTerminalWindow, false, 'one new tab per configuration');
+        assert.equal(call.mode, 'terminal');
+    });
+
+    test('it needs no explanation and no inspector port: nothing was rerouted, nothing is debugged', () => {
+        const [call] = buildExecutionPlan({ plan: plan('web:terminal') });
+        assert.equal(call.note, undefined);
+        assert.equal(call.debugPort, undefined);
+        assert.doesNotMatch(String(call.arguments.command), /inspect/);
+    });
+
+    test('only that entry moves: its neighbours keep their own tools', () => {
+        const calls = buildExecutionPlan({ plan: plan('web', 'api:terminal', 'shared') });
+        assert.deepEqual(calls.map((call) => call.tool), [RUN_CONFIGURATION_TOOL, TERMINAL_TOOL, RUN_CONFIGURATION_TOOL]);
+    });
+
+    test('a terminal entry does not consume a debug port', () => {
+        const calls = buildExecutionPlan({ plan: plan('web:debug', 'api:terminal', 'docs:debug') });
+        assert.deepEqual(calls.map((call) => call.debugPort), [9229, undefined, 9230]);
+    });
+
+    test('the debug tool changes nothing for it — it is not a debug entry', () => {
+        const calls = buildExecutionPlan({ plan: plan('web:terminal', 'api:debug'), debugTool: true });
+        assert.deepEqual(calls.map((call) => call.tool), [TERMINAL_TOOL, DEBUG_CONFIGURATION_TOOL]);
+    });
+
+    test('a command line is needed for it, so the CLI knows to read .idea/', () => {
+        assert.equal(needsTerminalCommands(plan('web:terminal'), 'run-window'), true);
+        assert.equal(needsTerminalCommands(plan('web', 'api'), 'run-window'), false);
+    });
+
+    test('a non-npm configuration is refused before any call is issued, and the hint names :run', () => {
+        assert.throws(
+            () => buildExecutionPlan({ plan: plan('web', 'Repro: Stale Job Cleanup:terminal') }),
+            (err) => {
+                assert.ok(err instanceof UnsupportedLaunchError);
+                assert.equal(err.mode, 'terminal');
+                assert.match(err.message, /cannot run "Repro: Stale Job Cleanup" in a terminal/);
+                assert.match(err.message, /:run/);
+                assert.doesNotMatch(err.message, /Drop --target=terminal/);
+                return true;
+            },
+        );
     });
 });
 

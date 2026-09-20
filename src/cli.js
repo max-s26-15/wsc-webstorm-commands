@@ -715,7 +715,12 @@ async function run(argv, deps) {
             );
         }
 
-        log.info(`${values['dry-run'] ? 'would launch' : 'launching'} ${plan.length} configuration(s) via ${target}:`);
+        // Under run-window, a :terminal entry is the one place the header would otherwise be
+        // untrue; --target=terminal already says the whole run is a terminal run.
+        const via = target === 'run-window' && plan.some((entry) => entry.mode === 'terminal')
+            ? `${target} + terminal`
+            : target;
+        log.info(`${values['dry-run'] ? 'would launch' : 'launching'} ${plan.length} configuration(s) via ${via}:`);
         log.out(formatPlan(plan));
         const notes = executionNotes(calls);
         for (const note of notes) log.warn(note);

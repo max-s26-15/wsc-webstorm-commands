@@ -241,7 +241,10 @@ export function formatPlan(plan) {
     if (plan.length === 0) return 'nothing to launch';
 
     const width = Math.max(...plan.map((entry) => entry.name.length));
+    // 5 is `debug`, the longest mode before `terminal` existed: a plan without one keeps its
+    // exact old alignment, and one with it widens the column rather than run into the source.
+    const modeWidth = Math.max(5, ...plan.map((entry) => entry.mode.length));
     return plan
-        .map((entry) => `${entry.name.padEnd(width)}  ${entry.mode.padEnd(5)}  (${entry.source})`)
+        .map((entry) => `${entry.name.padEnd(width)}  ${entry.mode.padEnd(modeWidth)}  (${entry.source})`)
         .join('\n');
 }

@@ -469,6 +469,50 @@ describe('flag table — --dry-run', () => {
         assert.deepEqual(result.executed, [], 'a dry run must never reach the execution seam');
     });
 
+    test(':terminal opens a Terminal tab for that entry only, and says so in the header', async () => {
+        const result = await wsc(['--dry-run', 'shared', 'web:terminal'], { idea: true });
+
+        assert.equal(result.code, 0);
+        // The command line itself is read off .idea/ (and may carry a PATH= for the
+        // project's .nvmrc, which depends on this machine), so only its shape is pinned.
+        const [shared, web, runCall, terminalCall, ...rest] = result.stdout.split('\n');
+        assert.equal(shared, 'shared  run       (cli)');
+        assert.equal(web, 'web     terminal  (cli)');
+        assert.equal(runCall, '→ execute_run_configuration  shared');
+        assert.match(terminalCall, /^→ execute_terminal_command {3}cd web && .*npm run dev$/);
+        assert.deepEqual(rest, ['']);
+        assert.match(result.stderr, /^would launch 2 configuration\(s\) via run-window \+ terminal:$/m);
+        assert.doesNotMatch(result.stderr, /inspector|debug/i, 'nothing was rerouted, so nothing is announced');
+        assert.deepEqual(result.executed, [], 'a dry run must never reach the execution seam');
+    });
+
+    test('a preset entry with mode terminal launches the same way as :terminal', async () => {
+        const result = await wsc(['--dry-run'], {
+            idea: true,
+            config: withPresets({ default: [{ name: 'shared' }, { name: 'web', mode: 'terminal' }] }),
+        });
+
+        assert.equal(result.code, 0);
+        assert.match(result.stdout, /→ execute_terminal_command +cd web && .*npm run dev$/m);
+        assert.match(result.stderr, /via run-window \+ terminal:$/m);
+    });
+
+    test('--target=terminal alone keeps the plain header: the whole run is already a terminal run', async () => {
+        const result = await wsc(['--dry-run', '--target=terminal', 'web:terminal'], { idea: true });
+
+        assert.equal(result.code, 0);
+        assert.match(result.stderr, /via terminal:$/m);
+    });
+
+    test(':terminal on a configuration that cannot be a command is refused before anything is printed', async () => {
+        const result = await wsc(['--dry-run', 'shared', 'Repro: Stale Job Cleanup:terminal']);
+
+        assert.equal(result.code, 1);
+        assert.equal(result.stdout, '');
+        assert.match(result.output, /Node\.js/);
+        assert.match(result.output, /Use :run/);
+    });
+
     test('--debug-port moves the inspector port the plan prints', async () => {
         const result = await wsc(['--dry-run', '--debug-port', '9400', 'web:debug', 'api:debug']);
 

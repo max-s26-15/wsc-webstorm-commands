@@ -198,9 +198,11 @@ const SHELL_SAFE = /^[A-Za-z0-9._:@/+-]+$/;
  * @returns {string} one indented line, ready to follow a message
  */
 export function terminalEscapeHint(mode) {
-    return mode === 'debug'
-        ? '  Run it without :debug, or name a configuration that already starts a debugger.'
-        : '  Drop --target=terminal to launch it in the IDE\'s Run window.';
+    if (mode === 'debug') return '  Run it without :debug, or name a configuration that already starts a debugger.';
+    // :terminal is the entry's own choice, so dropping the flag would not help: :run is what
+    // asks for the Run window (and a --target=terminal on the command line would still win).
+    if (mode === 'terminal') return '  Use :run, without --target=terminal, to launch it in the IDE\'s Run window.';
+    return '  Drop --target=terminal to launch it in the IDE\'s Run window.';
 }
 
 /** A configuration this CLI cannot express as a shell command line. */
@@ -290,9 +292,10 @@ export function buildTerminalCommand(config, mode, opts = {}) {
 /**
  * Whether one plan entry has to go through a shell command line rather than a Run tab.
  *
- * A `:debug` entry does — unless the IDE has the wsc plugin's debug tool, which starts the
+ * A `:terminal` entry always does: the entry asked for the Terminal window by name. So does
+ * a `:debug` entry — unless the IDE has the wsc plugin's debug tool, which starts the
  * configuration with the Debug executor itself. An explicit `--target=terminal` stays a
- * terminal launch either way: the user asked for the terminal by name.
+ * terminal launch either way, for every entry: the user asked for the terminal by name.
  *
  * Exported because the CLI has to know the same thing one step earlier: a command line is
  * the only thing that needs the run configuration's *real* definition read off disk, and
@@ -304,7 +307,7 @@ export function buildTerminalCommand(config, mode, opts = {}) {
  * @returns {boolean}
  */
 export function usesTerminal(entry, target, opts = {}) {
-    return target === 'terminal' || (entry.mode === 'debug' && !opts.debugTool);
+    return target === 'terminal' || entry.mode === 'terminal' || (entry.mode === 'debug' && !opts.debugTool);
 }
 
 /**
