@@ -62,4 +62,39 @@ describe('tokenize', () => {
     test('a tab or newline separates words like a space', () => {
         assert.deepEqual(tokenize('wsc\tweb\nx').words, ['wsc', 'web']);
     });
+
+    describe('a bare ; | & ends the previous command', () => {
+        test('the words of an earlier command are discarded', () => {
+            for (const sep of [';', '&&', '||', '|', '&']) {
+                const t = tokenize(`wsc -c ${sep} wsc a`);
+                assert.deepEqual(t.words, ['wsc'], sep);
+                assert.equal(t.partial, 'a', sep);
+            }
+        });
+
+        test('a separator glued to the word before it still ends that command', () => {
+            assert.deepEqual(tokenize('wsc -c; wsc a').words, ['wsc']);
+            assert.deepEqual(tokenize('wsc -c&&wsc a').words, ['wsc']);
+        });
+
+        test('a trailing separator leaves nothing behind, with or without a space after it', () => {
+            const empty = { words: [], partial: '', unescaped: [], quote: null };
+            assert.deepEqual(tokenize('wsc -c &&'), empty);
+            assert.deepEqual(tokenize('wsc -c && '), empty);
+            assert.deepEqual(tokenize('wsc -c |'), empty);
+        });
+
+        test('the partial word describes only what follows the last separator', () => {
+            const t = tokenize('wsc x && wsc a\\ b');
+            assert.equal(t.partial, 'a b');
+            assert.deepEqual(t.unescaped, [true, false, true]);
+        });
+
+        test('an escaped or quoted separator is an ordinary character', () => {
+            assert.deepEqual(tokenize('wsc a\\;b c').words, ['wsc', 'a;b']);
+            assert.deepEqual(tokenize("wsc ';' c").words, ['wsc', ';']);
+            assert.deepEqual(tokenize('wsc "a&&b" c').words, ['wsc', 'a&&b']);
+            assert.equal(tokenize('wsc a\\|b').partial, 'a|b');
+        });
+    });
 });

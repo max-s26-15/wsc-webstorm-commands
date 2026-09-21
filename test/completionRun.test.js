@@ -84,6 +84,41 @@ describe('completeCommand — sources', () => {
     });
 });
 
+describe('completeCommand — only the command being typed counts', () => {
+    test('an intent flag from an earlier command in the list does not silence the names', async () => {
+        const project = await tmpIdeaProject({ presets: PRESETS });
+        try {
+            const { lines } = await complete(project.dir, ['bash', 'wsc -c && wsc a']);
+            assert.equal(lines[0], 'values');
+            assert.ok(lines.includes('api'), lines.join('|'));
+        } finally {
+            await project.cleanup();
+        }
+    });
+
+    test('a --project from an earlier command is not used', async () => {
+        const project = await tmpIdeaProject({ presets: PRESETS });
+        const elsewhere = await tmpDir('wsc-elsewhere-');
+        try {
+            const line = `wsc --project ${elsewhere.dir} && wsc --preset `;
+            const { out } = await complete(project.dir, ['zsh', line]);
+            assert.equal(out, 'values\ndefault\nbackend\n');
+        } finally {
+            await elsewhere.cleanup();
+            await project.cleanup();
+        }
+    });
+
+    test('a different command before the separator does not matter', async () => {
+        const elsewhere = await tmpDir('wsc-elsewhere-');
+        try {
+            assert.equal((await complete(elsewhere.dir, ['zsh', 'cd x && wsc --ta'])).out, 'values\n--target\n');
+        } finally {
+            await elsewhere.cleanup();
+        }
+    });
+});
+
 describe('completeCommand — failures are silent', () => {
     test('a broken preset file means no presets, but the configurations are still offered', async () => {
         const project = await tmpIdeaProject({ presets: '{ not json' });

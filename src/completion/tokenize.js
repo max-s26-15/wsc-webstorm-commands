@@ -4,7 +4,8 @@
  * The shells' own splitting (`COMP_WORDS` in bash) breaks at `:`, `=` and `>`, which would
  * cut a name like `api > repro:stale-job:debug` into pieces that are not one token, so the
  * wrapper passes the raw line and this does the splitting the way a shell would: spaces
- * separate words, a backslash keeps the next character, quotes group.
+ * separate words, a backslash keeps the next character, quotes group, and a bare `;`, `|`
+ * or `&` ends the command, so `words` holds only the one being typed.
  *
  * Pure: no filesystem, no environment.
  */
@@ -83,6 +84,17 @@ export function tokenize(line) {
                 bare = [];
                 inWord = false;
             }
+            continue;
+        }
+
+        if (ch === ';' || ch === '|' || ch === '&') {
+            // A bare separator ends the command before it (`;`, `|`, `&`, and so `&&` and
+            // `||`): what was typed so far belongs to another program, and only the command
+            // being typed decides what to offer. The next word is the new command's name.
+            words.length = 0;
+            text = '';
+            bare = [];
+            inWord = false;
             continue;
         }
 
