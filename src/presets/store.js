@@ -32,7 +32,12 @@ export const DEFAULT_PRESET = 'default';
 export { MODES };
 
 /**
- * @typedef {{ name: string, mode: import('../modes.js').LaunchMode, [extra: string]: unknown }} PresetEntry
+ * @typedef {{
+ *   name: string,
+ *   mode: import('../modes.js').LaunchMode,
+ *   commands?: string[],
+ *   [extra: string]: unknown,
+ * }} PresetEntry
  * @typedef {{
  *   version: number,
  *   defaultPreset: string,
@@ -53,6 +58,19 @@ export class PresetConfigError extends Error {
         this.filePath = filePath;
         this.detail = detail;
     }
+}
+
+/**
+ * An entry that runs shell commands of its own instead of naming a run configuration.
+ *
+ * The one place that decides it: everything downstream (resolving, the launch plan, the
+ * `--configure` screen) asks this instead of looking for `commands` itself.
+ *
+ * @param {PresetEntry} entry
+ * @returns {entry is PresetEntry & { commands: string[] }}
+ */
+export function isCustomEntry(entry) {
+    return Array.isArray(entry.commands);
 }
 
 /** @returns {PresetConfig} a config with nothing configured yet */
@@ -232,11 +250,12 @@ function parseEntry(entry, presetName, index, filePath) {
         throw new PresetConfigError(filePath, `${where} must be an object`);
     }
 
-    const { name, mode, ...extra } = /** @type {Record<string, unknown>} */ (entry);
+    const { name, mode, commands, ...extra } = /** @type {Record<string, unknown>} */ (entry);
 
     if (typeof name !== 'string' || name === '') {
         throw new PresetConfigError(filePath, `${where} is missing a non-empty "name"`);
     }
+    if (commands !== undefined) return parseCustomEntry(name, mode, commands, extra, where, filePath);
     if (mode !== undefined && !MODES.includes(/** @type {any} */ (mode))) {
         throw new PresetConfigError(
             filePath,
@@ -245,6 +264,38 @@ function parseEntry(entry, presetName, index, filePath) {
     }
 
     return { ...extra, name, mode: /** @type {import('../modes.js').LaunchMode} */ (mode ?? 'run') };
+}
+
+/**
+ * @param {string} name
+ * @param {unknown} mode
+ * @param {unknown} commands
+ * @param {Record<string, unknown>} extra
+ * @param {string} where
+ * @param {string} filePath
+ * @returns {PresetEntry}
+ */
+function parseCustomEntry(name, mode, commands, extra, where, filePath) {
+    if (mode !== undefined && mode !== 'terminal') {
+        throw new PresetConfigError(
+            filePath,
+            `${where} has "commands", so its mode must be "terminal", got ${JSON.stringify(mode)}`,
+        );
+    }
+
+    // One line each: the list is joined with `&&` into a single command line, and a newline
+    // inside an item would start a second command that `&&` no longer guards.
+    const valid = Array.isArray(commands)
+        && commands.length > 0
+        && commands.every((command) => typeof command === 'string' && command.trim() !== '' && !/[\r\n]/.test(command));
+    if (!valid) {
+        throw new PresetConfigError(
+            filePath,
+            `${where} "commands" must be a non-empty list of non-empty single-line strings`,
+        );
+    }
+
+    return { ...extra, name, mode: 'terminal', commands: [.../** @type {string[]} */ (commands)] };
 }
 
 /**
@@ -267,9 +318,10 @@ export function serializeConfig(config) {
         presets: Object.fromEntries(
             Object.entries(presets ?? {}).map(([name, entries]) => [
                 name,
-                entries.map(({ name: entryName, mode, ...extra }) => ({
+                entries.map(({ name: entryName, mode, commands, ...extra }) => ({
                     name: entryName,
                     mode,
+                    ...(commands === undefined ? {} : { commands }),
                     ...sortKeys(extra),
                 })),
             ]),
