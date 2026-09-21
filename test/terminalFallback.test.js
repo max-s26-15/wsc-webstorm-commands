@@ -284,3 +284,15 @@ describe('runTerminalFallback — --dry-run and the pool', () => {
         assert.match(stderr.text(), /inspector port 9229 already in use/);
     });
 });
+
+describe('runTerminalFallback — custom command entries', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+
+    test('a custom entry becomes a tab titled after it, running the joined commands', async () => {
+        const { code, opened } = await run({ presetEntries: [{ name: 'web', mode: 'run' }, seed] });
+
+        assert.equal(code, 0);
+        assert.deepEqual(opened[0].tabs.map((tab) => tab.name), ['web', 'seed db']);
+        assert.equal(opened[0].tabs[1].command, 'npm i && npm run seed');
+    });
+});

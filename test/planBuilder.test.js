@@ -17,6 +17,7 @@ import {
     debugPortsOf,
     executionNotes,
     formatExecutionPlan,
+    guessedCommands,
     needsTerminalCommands,
     shellQuote,
     splitNpmConfigName,
@@ -509,5 +510,59 @@ describe('formatExecutionPlan', () => {
 
     test('reports an empty plan in words rather than aligning nothing', () => {
         assert.equal(formatExecutionPlan([]), 'nothing to launch');
+    });
+});
+
+describe('buildExecutionPlan — custom command entries', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+    const customPlan = (requests = []) => buildLaunchPlan({ configs: CONFIGS, preset: [seed], requests });
+
+    test('is one Terminal call: the commands joined with &&, in a tab named after the entry', () => {
+        const [call] = buildExecutionPlan({ plan: customPlan() });
+
+        assert.equal(call.tool, TERMINAL_TOOL);
+        assert.equal(call.arguments.command, 'npm i && npm run seed');
+        assert.equal(call.arguments.reuseExistingTerminalWindow, false);
+        assert.equal(call.tabName, 'seed db');
+        assert.equal(call.mode, 'terminal');
+        assert.equal(call.commandSource, 'custom');
+    });
+
+    test('is a Terminal call under either target, with no inspector port and no note', () => {
+        for (const target of EXEC_TARGETS) {
+            const [call] = buildExecutionPlan({ plan: customPlan(), target });
+            assert.equal(call.tool, TERMINAL_TOOL);
+            assert.equal(call.debugPort, undefined);
+            assert.equal(call.note, undefined);
+        }
+    });
+
+    test('never asks commandFor: there is no .idea/ definition to look up', () => {
+        const commandFor = () => assert.fail('a custom entry has no run configuration');
+        assert.doesNotThrow(() => buildExecutionPlan({ plan: customPlan(), commandFor }));
+    });
+
+    test('does not shift the inspector ports of the :debug entries around it', () => {
+        const calls = buildExecutionPlan({ plan: customPlan([{ name: 'web', mode: 'debug' }]) });
+        assert.deepEqual(calls.map((call) => call.debugPort), [undefined, DEBUG_PORT_BASE]);
+    });
+
+    test('is not reported as a guessed command line', () => {
+        assert.deepEqual(guessedCommands(buildExecutionPlan({ plan: customPlan() })), []);
+    });
+});
+
+describe('needsTerminalCommands — custom command entries', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i'] };
+
+    test('a plan of only custom entries needs no .idea/ read, whatever the target', () => {
+        const plan = buildLaunchPlan({ configs: CONFIGS, preset: [seed] });
+        assert.equal(needsTerminalCommands(plan, 'run-window'), false);
+        assert.equal(needsTerminalCommands(plan, 'terminal'), false);
+    });
+
+    test('a :terminal configuration next to one still does', () => {
+        const plan = buildLaunchPlan({ configs: CONFIGS, preset: [seed], requests: [{ name: 'web', mode: 'terminal' }] });
+        assert.equal(needsTerminalCommands(plan, 'run-window'), true);
     });
 });

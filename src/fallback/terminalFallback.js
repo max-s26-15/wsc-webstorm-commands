@@ -16,9 +16,10 @@
  *   - Only npm and Node.js configurations can be rebuilt as a command line.
  */
 import { UsageError, parseRequests } from '../args.js';
+import { customCommandLine } from '../exec/customCommands.js';
 import { findBusyPorts, warnBusyDebugPorts } from '../exec/inspectorPorts.js';
 import { DEBUG_HOST, DEBUG_PORT_BASE, MAX_PORT, debugNote } from '../exec/planBuilder.js';
-import { buildLaunchPlan, formatPlan } from '../resolve.js';
+import { buildLaunchPlan, formatPlan, isCustomPlanEntry } from '../resolve.js';
 import { FallbackError } from './errors.js';
 import { DISK_SOURCE, buildFallbackCommand, readIdeaRunConfigs } from './ideaRunConfigs.js';
 import { runSingleTabPool } from './singleTabPool.js';
@@ -149,6 +150,12 @@ function buildTabs(plan, ctx) {
     let debugSeen = 0;
 
     const tabs = plan.map((entry) => {
+        // The preset's own shell text: there is no run configuration to rebuild a command
+        // from, and no inspector port to hand out.
+        if (isCustomPlanEntry(entry)) {
+            return { name: entry.name, mode: entry.mode, command: customCommandLine(entry.commands) };
+        }
+
         // One inspector port per debug entry, counting up in plan order — the same rule
         // (and the same numbers) the IDE path uses, so `--debug-port` means one thing.
         const debugPort = entry.mode === 'debug' ? base + debugSeen++ : undefined;
