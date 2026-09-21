@@ -117,6 +117,10 @@ describe('complete — what may follow', () => {
         assert.deepEqual(at('--preset backend --dry-run ').values, catalogue.configs);
     });
 
+    test('-- ends the run of presets', () => {
+        assert.deepEqual(at('--preset backend -- ').values, catalogue.configs);
+    });
+
     test('--configure, --list and --completion take no names', () => {
         assert.deepEqual(at('-c '), { directive: 'none', values: [] });
         assert.deepEqual(at('--list '), { directive: 'none', values: [] });

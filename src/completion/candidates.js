@@ -183,7 +183,9 @@ export function complete({ words, partial }, catalogue) {
     // is rejected the moment it is run.
     if (flagWords.some(isIntent)) return none();
 
-    const presets = inPresetRun(flagWords, catalogue.presets) ? catalogue.presets : [];
+    // `--` ends a run of presets too: parseCliArgs stops attributing tokens to `--preset`
+    // there, so what follows is a configuration name even right after `--preset x --`.
+    const presets = !literal && inPresetRun(flagWords, catalogue.presets) ? catalogue.presets : [];
     return offer(names(partial, presets, catalogue.configs));
 }
 
