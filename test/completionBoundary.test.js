@@ -61,6 +61,14 @@ describe('the completion path stays light', () => {
 });
 
 describe('bin/wsc.js', () => {
+    test('has no static import: each branch loads only its own module', async () => {
+        // A static `import { runCli } from '../src/cli.js'` would load the prompts on every
+        // Tab, and run.js's own walk above would not notice.
+        const source = await readFile(WSC_BIN, 'utf8');
+        assert.deepEqual([...source.matchAll(STATIC_IMPORT)].map(([, specifier]) => specifier), []);
+        assert.match(source, /await import\(['"]\.\.\/src\/cli\.js['"]\)/, 'the CLI is still loaded, dynamically');
+    });
+
     test('__complete answers Tab without going through the CLI', async () => {
         const project = await tmpIdeaProject();
         try {
