@@ -54,7 +54,9 @@ exercises it.
 - `bin/wsc.js` — shebang entrypoint. Calls `runCli(process.argv.slice(2))` and does `process.exit(code)` — except that
   `argv[0] === '__complete'` goes to `src/completion/run.js` instead, each imported only on its own branch (see the
   completion paragraph below).
-  No logic lives here; keep it that way so `src/cli.js` stays unit-testable without spawning a process.
+  No logic lives here beyond that one branch (which also swallows a failed load of `run.js`, so Tab stays silent);
+  keep it that way so `src/cli.js` stays unit-testable without spawning a process. It has no static import at all,
+  and `test/completionBoundary.test.js` pins that.
 - `src/cli.js` — argument parsing (`node:util.parseArgs`) and the `runCli(argv): Promise<number>` contract
   every flag plugs into. Four intents live in it, and each one refuses the others' flags rather than
   half-honouring a command line: a launch, `--configure`, `--list`, and `--completion`.
@@ -521,9 +523,13 @@ exercises it.
   per line. **Escaping is done in JS (`format.js`), not in the shell**: zsh gets raw names and `compadd`
   quotes them; bash gets ready `COMPREPLY` items, cut after the last *bare* `COMP_WORDBREAKS` character
   (`:`, `=`, `>` are word breaks in bash, and `api > repro:stale-job:debug` has all of them) and
-  backslash-escaped. The wrapper passes the raw line, not `COMP_WORDS`, for the same reason. Never
-  `compopt -o filenames` for names: readline appends `/` to a candidate that matches a directory in the
-  working directory, and demo-app has both a configuration and a directory called `web`. Every failure means
+  backslash-escaped. The wrapper passes the raw line, not `COMP_WORDS`, for the same reason. The tokenizer ends a
+  command at a bare `;`, `|` or `&` (so `&&` and `||` too), so an earlier command in a list cannot leak its
+  flags or its `--project` into this one. `compopt -o filenames` is used for the `dirs` directive **only**, never
+  for names: readline appends `/` to a candidate that matches a directory in the working directory, and demo-app
+  has both a configuration and a directory called `web`. A leading `~` in `--project` is expanded with
+  `os.homedir()` (the shell has not expanded it yet); `~user` is not. A candidate containing a control character
+  (`CONTROL_CHARACTERS`, the preset store's own definition) is dropped, not escaped. Every failure means
   "offer less": exit 0, empty stderr, `WSC_COMPLETE_DEBUG=1` prints why. `__complete` is a reserved word only
   as `argv[0]`. The zsh wrapper is tested with stubbed `compadd`/`_files`/`_wsc_line` (BUFFER and CURSOR
   exist only inside ZLE); the real Tab is checked by hand through a pty.

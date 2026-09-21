@@ -164,6 +164,12 @@ a new IDE build can need a fresh build of it. The plugin declares `since-build 2
 Add `source <(wsc --completion zsh)` to `~/.zshrc`, or `source <(wsc --completion bash)` to `~/.bashrc`;
 `wsc` has to be on your `PATH` (`npm link`).
 
+- `source <(wsc --completion zsh)` costs about 0.2 s in every new shell. Save the script once
+  (`wsc --completion zsh > ~/.wsc-completion.zsh`) and `source` that file instead.
+- bash 4 or newer is recommended. bash 3.2 (the macOS default) cannot `source <(…)`; use
+  `source /dev/stdin <<<"$(wsc --completion bash)"`. It also has no `compopt`, so `--project`
+  completes directories without escaping them.
+
 ```
 $ wsc --completion zsh | head -8
 #compdef wsc
@@ -190,6 +196,8 @@ api:run
 api:debug
 api:terminal
 ```
+
+`WSC_COMPLETE_DEBUG=1` prints why a Tab offered less. `__complete` is reserved as the first argument.
 
 ## The flag table
 
