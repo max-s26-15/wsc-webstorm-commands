@@ -18,3 +18,15 @@ export const MODES = /** @type {const} */ (['run', 'debug', 'terminal']);
 
 /** Mode used when a configuration is named without a suffix. */
 export const DEFAULT_MODE = 'run';
+
+/**
+ * Values accepted by --fallback.
+ *
+ * `retry` polls for the IDE, `terminal` skips it entirely. Both exist so a script — or
+ * anything else without a terminal to answer in — can state up front what it wants
+ * instead of being asked a question nobody is there to read.
+ *
+ * Here rather than next to the prompt that uses it: Tab completion needs the list, and
+ * that prompt module imports @inquirer/prompts, which a completion must never load.
+ */
+export const FALLBACK_MODES = /** @type {const} */ (['retry', 'terminal']);

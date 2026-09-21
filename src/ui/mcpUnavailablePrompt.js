@@ -13,16 +13,11 @@
  */
 import { select } from '@inquirer/prompts';
 
+import { FALLBACK_MODES } from '../modes.js';
 import { isCancelled } from './promptCancel.js';
 
-/**
- * Values accepted by --fallback.
- *
- * `retry` polls for the IDE, `terminal` skips it entirely. Both exist so a script — or
- * anything else without a terminal to answer in — can state up front what it wants
- * instead of being asked a question nobody is there to read.
- */
-export const FALLBACK_MODES = /** @type {const} */ (['retry', 'terminal']);
+// Re-exported so existing importers keep working; the list itself lives in modes.js.
+export { FALLBACK_MODES };
 
 /**
  * How many times `--fallback=retry` re-probes before giving up, and how long it waits

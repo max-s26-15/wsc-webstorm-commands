@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import * as args from '../src/args.js';
-import { DEFAULT_MODE, MODES } from '../src/modes.js';
+import { DEFAULT_MODE, FALLBACK_MODES, MODES } from '../src/modes.js';
 import * as configureLogic from '../src/ui/configureLogic.js';
+import * as prompt from '../src/ui/mcpUnavailablePrompt.js';
 import * as store from '../src/presets/store.js';
 
 describe('launch modes', () => {
@@ -19,5 +20,10 @@ describe('launch modes', () => {
         assert.equal(store.MODES, MODES);
         assert.equal(args.DEFAULT_MODE, DEFAULT_MODE);
         assert.equal(configureLogic.DEFAULT_MODE, DEFAULT_MODE);
+    });
+
+    it('--fallback values have one spelling too: the prompt re-exports the list from modes.js', () => {
+        assert.deepEqual([...FALLBACK_MODES], ['retry', 'terminal']);
+        assert.equal(prompt.FALLBACK_MODES, FALLBACK_MODES);
     });
 });
