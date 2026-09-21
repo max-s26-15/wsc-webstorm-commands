@@ -16,9 +16,10 @@
  *   - Only npm and Node.js configurations can be rebuilt as a command line.
  */
 import { UsageError, parseRequests } from '../args.js';
-import { customCommandLine } from '../exec/customCommands.js';
+import { announceCustomCommands, customCommandLine } from '../exec/customCommands.js';
 import { findBusyPorts, warnBusyDebugPorts } from '../exec/inspectorPorts.js';
 import { DEBUG_HOST, DEBUG_PORT_BASE, MAX_PORT, debugNote } from '../exec/planBuilder.js';
+import { isCustomEntry } from '../presets/store.js';
 import { buildLaunchPlan, formatPlan, isCustomPlanEntry } from '../resolve.js';
 import { FallbackError } from './errors.js';
 import { DISK_SOURCE, buildFallbackCommand, readIdeaRunConfigs } from './ideaRunConfigs.js';
@@ -60,7 +61,11 @@ export async function runTerminalFallback(ctx) {
 
     const configs = await (ctx.readConfigs ?? readIdeaRunConfigs)(projectRoot);
     log.debug(`${configs.length} run configurations read from ${DISK_SOURCE}`);
-    if (configs.length === 0) {
+    // Only a launch that names run configurations needs the catalogue. A preset of nothing
+    // but custom commands has no use for it, so a project WebStorm saved nothing for can
+    // still run one — which is the whole point of a command that is not a run configuration.
+    const needsCatalogue = ctx.positionals.length > 0 || ctx.presetEntries.some((entry) => !isCustomEntry(entry));
+    if (configs.length === 0 && needsCatalogue) {
         throw new FallbackError(
             `WebStorm has saved no run configurations for this project (looked in ${DISK_SOURCE}).\n` +
                 '  Without the MCP Server that file is the only list wsc has, so there is nothing\n' +
@@ -73,6 +78,7 @@ export async function runTerminalFallback(ctx) {
 
     log.info(`${ctx.dryRun ? 'would launch' : 'launching'} ${tabs.length} configuration(s) without the IDE:`);
     log.out(formatPlan(plan));
+    announceCustomCommands(plan, log);
     for (const note of debugNotes(tabs)) log.warn(note);
 
     // Ahead of the dry-run return, exactly as on the main path: a dry run is a real

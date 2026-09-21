@@ -295,4 +295,43 @@ describe('runTerminalFallback — custom command entries', () => {
         assert.deepEqual(opened[0].tabs.map((tab) => tab.name), ['web', 'seed db']);
         assert.equal(opened[0].tabs[1].command, 'npm i && npm run seed');
     });
+
+    test('a preset of only custom commands needs no run configuration saved at all', async () => {
+        const { code, opened } = await run({ configs: [], presetEntries: [seed] });
+
+        assert.equal(code, 0);
+        assert.deepEqual(opened[0].tabs, [{ name: 'seed db', mode: 'terminal', command: 'npm i && npm run seed' }]);
+    });
+
+    test('naming a run configuration still needs the catalogue, custom entries or not', async () => {
+        await assert.rejects(
+            () => run({ configs: [], presetEntries: [seed], positionals: ['web'] }),
+            (err) => err.name === 'FallbackError' && /saved no run configurations/.test(err.message),
+        );
+    });
+
+    test('a preset with a run configuration in it still needs the catalogue', async () => {
+        await assert.rejects(
+            () => run({ configs: [], presetEntries: [seed, { name: 'web', mode: 'run' }] }),
+            (err) => err.name === 'FallbackError' && /saved no run configurations/.test(err.message),
+        );
+    });
+
+    test('the commands are announced before the tabs open', async () => {
+        const { err } = await run({ presetEntries: [seed] });
+        assert.match(err, /custom commands from the preset:\n {2}seed db: npm i && npm run seed\n/);
+    });
+
+    test('--dry-run prints the command and opens nothing', async () => {
+        const { code, opened, out } = await run({ presetEntries: [seed], dryRun: true });
+
+        assert.equal(code, 0);
+        assert.equal(opened.length, 0);
+        assert.match(out, /^→ seed db {2}npm i && npm run seed$/m);
+    });
+
+    test('with no terminal emulator the single-window pool gets the same tab', async () => {
+        const { pooled } = await run({ presetEntries: [seed], terminal: false });
+        assert.equal(pooled[0][0].command, 'npm i && npm run seed');
+    });
 });

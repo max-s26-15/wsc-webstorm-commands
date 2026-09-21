@@ -744,3 +744,70 @@ describe('formatRunConfigs', () => {
         assert.equal(formatRunConfigs([]), '');
     });
 });
+
+// ── custom commands in a preset ──────────────────────────────────────────────
+describe('custom commands in a preset', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+    const config = withPresets({ default: [seed] });
+
+    test('--dry-run shows the joined command line and never reads .idea/', async () => {
+        const result = await wsc(['--dry-run'], {
+            config,
+            deps: { readIdeaRunConfigs: async () => assert.fail('a custom entry has nothing in .idea/') },
+        });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(result.executed, [], '--dry-run launches nothing');
+        assert.match(result.stdout, /^seed db {2}terminal {2}\(preset\)$/m);
+        assert.match(result.stdout, /^→ execute_terminal_command {2}npm i && npm run seed$/m);
+    });
+
+    test('a real launch hands the runner one Terminal call, titled after the entry', async () => {
+        const result = await wsc([], { config });
+
+        assert.equal(result.code, 0);
+        const [call] = result.contexts[0].calls;
+        assert.equal(call.tool, 'execute_terminal_command');
+        assert.equal(call.tabName, 'seed db');
+        assert.equal(call.arguments.command, 'npm i && npm run seed');
+    });
+
+    test('the command line is announced on stderr, ahead of the launch', async () => {
+        const result = await wsc(['--dry-run'], { config });
+        assert.match(result.stderr, /custom commands from the preset:\n {2}seed db: npm i && npm run seed\n/);
+    });
+
+    test('next to a run configuration the header says so, and each entry gets its own tool', async () => {
+        const result = await wsc([], { config: withPresets({ default: [{ name: 'shared' }, seed] }) });
+
+        assert.equal(result.code, 0);
+        assert.match(result.stderr, /via run-window \+ terminal:$/m);
+        assert.deepEqual(
+            result.contexts[0].calls.map((call) => call.tool),
+            ['execute_run_configuration', 'execute_terminal_command'],
+        );
+    });
+
+    test('--target does not change where it goes', async () => {
+        for (const target of ['run-window', 'terminal']) {
+            const result = await wsc(['--dry-run', `--target=${target}`], { config });
+            assert.match(result.stdout, /^→ execute_terminal_command {2}npm i && npm run seed$/m);
+        }
+    });
+
+    test('a malformed commands list stops the run with a message naming the file', async () => {
+        const result = await wsc([], { config: withPresets({ default: [{ name: 'x', commands: [] }] }) });
+
+        assert.equal(result.code, 1);
+        assert.deepEqual(result.executed, []);
+        assert.match(result.output, /webstorm-commands\.json/);
+        assert.match(result.output, /"commands" must be a non-empty list/);
+    });
+
+    test('the no-IDE hand-over carries the entry with its commands', async () => {
+        const result = await wsc([], { config, deps: { port: null, fallbackChoice: { kind: 'terminal' } } });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(result.fellBack[0].presetEntries, [seed]);
+    });
+});

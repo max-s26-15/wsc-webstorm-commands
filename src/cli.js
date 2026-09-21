@@ -24,6 +24,7 @@ import {
     guessedCommands,
     needsTerminalCommands,
 } from './exec/planBuilder.js';
+import { announceCustomCommands } from './exec/customCommands.js';
 import { guessedCommandNote, ideaCommandResolver } from './exec/ideaCommands.js';
 import { warnBusyDebugPorts } from './exec/inspectorPorts.js';
 import { readIdeaRunConfigs } from './fallback/ideaRunConfigs.js';
@@ -728,6 +729,9 @@ async function run(argv, deps) {
             : target;
         log.info(`${values['dry-run'] ? 'would launch' : 'launching'} ${plan.length} configuration(s) via ${via}:`);
         log.out(formatPlan(plan));
+        // Ahead of every note and of the launch itself: the preset file is usually committed,
+        // so what it is about to run should be visible, not merely obeyed.
+        announceCustomCommands(plan, log);
         const notes = executionNotes(calls);
         for (const note of notes) log.warn(note);
         // A note here means :debug was rerouted to the terminal; the plugin is the way out.
