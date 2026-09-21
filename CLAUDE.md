@@ -16,6 +16,8 @@ OS-terminal fallback that launches without the IDE at all, the final flag set (`
 the whole table pinned by `test/cli.integration.test.js`), and the phase-10 acceptance pass. `runCli`
 walks the whole pipeline (args → project → preset → MCP → resolve → launch) and really opens tabs, on
 both paths. The five-point acceptance checklist was run end to end against the live IDE on `demo-app`.
+Since then: the user's own CLI commands in a preset (`commands` on an entry) — an entry with no run
+configuration behind it, launched as a named Terminal tab.
 What is left is user-triggered: `/code-review` over the whole diff before the first version tag.
 
 ## Commands
@@ -202,6 +204,28 @@ exercises it.
   `mode: "terminal"` stops with a `PresetConfigError` naming the file, which is the store's rule anyway.
   In `test/cli.integration.test.js` the terminal command line is matched by shape, not text — it may carry
   a `PATH=` for the project's `.nvmrc`, which depends on the machine.
+- **Custom command entries — a preset entry with `commands` has no run configuration behind it.**
+  `{ "name": "seed db", "mode": "terminal", "commands": ["npm i", "npm run seed"] }` is its own *kind*
+  (`isCustomEntry` in `store.js`, `isCustomPlanEntry` in `resolve.js`), not a fourth mode: `mode` is always
+  `terminal`, `MODES` is untouched (a `command` mode would have made `wsc foo:command` a token and a
+  useless `select()` option) and the schema version stays 1, so an older `wsc` fails loudly instead of
+  running something wrong. It exists only inside a preset — there is no way to call it by name from the
+  command line, and `--target`/`:debug` do not touch it. `buildLaunchPlan()` keys its `Map` on
+  `JSON.stringify([kind, name])`, so a run configuration called `custom:x` cannot swallow a custom entry
+  named `x`; two custom entries of the same name merge by the usual rule. `customCommandLine()` joins with
+  ` && ` and does **not** quote: the lines are shell text the user typed, like `config.args`, and `&&` is
+  the "stop at the first failure" decision. A custom call reads no `.idea/`, gets no inspector port, never
+  goes through `commandFor`, and `needsTerminalCommands()` ignores it; it is a Terminal call like the others,
+  so it gets the same named session (`tabName = entry.name`). `announceCustomCommands()` prints each
+  `name: command` line on **every** launch, not only `--dry-run`: `webstorm-commands.json` sits in `.idea/`
+  and is usually committed, so a cloned repository would otherwise run shell text the first time `wsc` is
+  typed. The no-IDE path needs no catalogue for a preset made only of custom entries (the "WebStorm has
+  saved no run configurations" error is raised only when something needs one, after the plan is known),
+  and `buildTabs()` never reads `entry.config` for them. In `--configure` the checkbox value of a custom
+  entry is `customChoiceValue(name)`, distinct from a configuration name, because a hand-edited file can
+  hold both under one name; an IDE that reports no configurations is no longer an error by itself (only the
+  add-a-command loop is offered), but with *stale* preset entries it still is (exit 1) — rewriting the
+  preset from an empty list would delete entries the IDE merely failed to show.
 - **A Terminal tab is titled after the MCP *client* that opened it — so each one gets its own session.**
   `execute_terminal_command` has no tab-name parameter (schema read from the live IDE). Measured on
   WebStorm 2026.2.1: three calls from a client called `wsc` gave three tabs titled `wsc`; sessions called

@@ -328,6 +328,61 @@ Without the IDE (`--fallback=terminal`) every tab is already an OS terminal, so 
 the same launch as `:run`. A preset that contains `"mode": "terminal"` is not readable by a `wsc`
 built before this mode existed: it stops with an error naming the file rather than guessing.
 
+## Your own commands (no run configuration)
+
+A preset entry with a `commands` list needs no run configuration at all: `wsc` runs the commands in a
+new IDE **Terminal tab titled with the entry's name**, the same tab kind `:terminal` opens.
+
+```json
+"default": [
+  { "name": "test", "mode": "run" },
+  { "name": "seed db", "mode": "terminal", "commands": ["npm i", "npm run seed"] }
+]
+```
+
+`mode` is always `terminal` for such an entry, and may be left out. The commands are joined with `&&`,
+so the series stops at the first one that fails, and the tab stays open with the output. Each command is
+shell text, run as written — `cd server && npm run seed` is how a command picks its directory.
+
+`wsc -c` adds one: after the checkbox list it asks `Add a custom command?`, then a name, then the
+commands one at a time (an empty line ends the list; the first one is required). An existing custom
+entry shows in the checkbox as `⌘ seed db — npm i && npm run seed`, and unchecking it removes it. A
+name cannot be the name of a run configuration, or of another custom command in the same preset.
+
+The commands are always printed on stderr before anything starts, under `custom commands from the
+preset:`. The preset file lives in `.idea/` and is usually committed, so a repository you have just
+cloned could otherwise run shell text the first time you type `wsc`; this way you see what is about
+to start. Without the IDE (`--fallback=terminal`) the same entry is a tab of the OS terminal, with the
+same title:
+
+```
+$ wsc --dry-run --mcp-port 65001 --fallback=terminal
+warn: WebStorm is not answering — launching without IDE tabs
+would launch 2 configuration(s) without the IDE:
+test     run       (preset)
+seed db  terminal  (preset)
+custom commands from the preset:
+  seed db: npm i && npm run seed
+→ test     PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test
+→ seed db  npm i && npm run seed
+```
+
+On the IDE path the same entry is one more `→ execute_terminal_command  npm i && npm run seed` line in
+the `--dry-run` output, in a tab of its own.
+
+Limits worth knowing:
+
+- A custom command cannot be started by name from the command line: `wsc "seed db"` is an
+  `unknown run configuration` error. It runs as part of the preset that holds it.
+- `--target` and `:debug` do not apply to it — there is no debugger and it always uses a Terminal tab.
+- Each command is shell text joined with a literal ` && `, so a command that ends in a shell comment
+  (`# …`) or a trailing backslash also swallows the next one.
+- A preset made only of custom commands also works without the IDE when WebStorm has saved no run
+  configurations to `.idea/`, since it needs no catalogue.
+- A `wsc` built before this feature does not know such an entry and stops with an error rather than
+  running anything: it reads the entry as a run configuration called `seed db` (`unknown run
+  configuration`), or, if it is older than `:terminal` too, refuses the file by name.
+
 ## `--target=terminal`
 
 `run-window` (the default) opens the IDE's native Run/Debug tabs. `terminal` runs the same
