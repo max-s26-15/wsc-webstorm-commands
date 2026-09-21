@@ -47,6 +47,8 @@ const run = async (opts = {}) => {
     const stderr = fakeStream();
     const opened = [];
     const pooled = [];
+    // What stderr held when the tabs were opened: the announcement has to come first.
+    const seenAtOpen = { tabs: '', pool: '' };
 
     const adapter = { id: 'gnome-terminal', opens: 'tab' };
     const code = await runTerminalFallback({
@@ -60,12 +62,12 @@ const run = async (opts = {}) => {
         log: createLogger({ stdout, stderr, env: { NO_COLOR: '1' } }),
         readConfigs: async () => opts.configs ?? CONFIGS,
         findTerminal: async () => (opts.terminal === false ? null : { adapter, bin: {} }),
-        openTabs: async (tabs, tabOpts) => { opened.push({ tabs, opts: tabOpts }); },
-        runPool: async (tabs) => { pooled.push(tabs); return 0; },
+        openTabs: async (tabs, tabOpts) => { seenAtOpen.tabs = stderr.text(); opened.push({ tabs, opts: tabOpts }); },
+        runPool: async (tabs) => { seenAtOpen.pool = stderr.text(); pooled.push(tabs); return 0; },
         findBusyPorts: async () => [],
     });
 
-    return { code, opened, pooled, out: stdout.text(), err: stderr.text(), all: stdout.text() + stderr.text() };
+    return { code, opened, pooled, seenAtOpen, out: stdout.text(), err: stderr.text(), all: stdout.text() + stderr.text() };
 };
 
 describe('runTerminalFallback — what it can launch', () => {
@@ -282,5 +284,62 @@ describe('runTerminalFallback — --dry-run and the pool', () => {
         });
 
         assert.match(stderr.text(), /inspector port 9229 already in use/);
+    });
+});
+
+describe('runTerminalFallback — custom command entries', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+
+    test('a custom entry becomes a tab titled after it, running the joined commands', async () => {
+        const { code, opened } = await run({ presetEntries: [{ name: 'web', mode: 'run' }, seed] });
+
+        assert.equal(code, 0);
+        assert.deepEqual(opened[0].tabs.map((tab) => tab.name), ['web', 'seed db']);
+        assert.equal(opened[0].tabs[1].command, 'npm i && npm run seed');
+    });
+
+    test('a preset of only custom commands needs no run configuration saved at all', async () => {
+        const { code, opened } = await run({ configs: [], presetEntries: [seed] });
+
+        assert.equal(code, 0);
+        assert.deepEqual(opened[0].tabs, [{ name: 'seed db', mode: 'terminal', command: 'npm i && npm run seed' }]);
+    });
+
+    test('naming a run configuration still needs the catalogue, custom entries or not', async () => {
+        await assert.rejects(
+            () => run({ configs: [], presetEntries: [seed], positionals: ['web'] }),
+            (err) => err.name === 'FallbackError' && /saved no run configurations/.test(err.message),
+        );
+    });
+
+    test('a preset with a run configuration in it still needs the catalogue', async () => {
+        await assert.rejects(
+            () => run({ configs: [], presetEntries: [seed, { name: 'web', mode: 'run' }] }),
+            (err) => err.name === 'FallbackError' && /saved no run configurations/.test(err.message),
+        );
+    });
+
+    test('the commands are announced before the tabs open', async () => {
+        const { err, seenAtOpen } = await run({ presetEntries: [seed] });
+        assert.match(err, /custom commands from the preset:\n {2}seed db: npm i && npm run seed\n/);
+        assert.match(seenAtOpen.tabs, /custom commands from the preset:/, 'already printed when the tabs opened');
+    });
+
+    test('the commands are announced before the single-window pool starts too', async () => {
+        const { seenAtOpen } = await run({ presetEntries: [seed], terminal: false });
+        assert.match(seenAtOpen.pool, /custom commands from the preset:/);
+    });
+
+    test('--dry-run prints the command and opens nothing', async () => {
+        const { code, opened, out } = await run({ presetEntries: [seed], dryRun: true });
+
+        assert.equal(code, 0);
+        assert.equal(opened.length, 0);
+        assert.match(out, /^→ seed db {2}npm i && npm run seed$/m);
+    });
+
+    test('with no terminal emulator the single-window pool gets the same tab', async () => {
+        const { pooled } = await run({ presetEntries: [seed], terminal: false });
+        assert.equal(pooled[0][0].command, 'npm i && npm run seed');
     });
 });

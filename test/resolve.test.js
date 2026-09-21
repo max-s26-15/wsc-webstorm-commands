@@ -8,6 +8,7 @@ import {
     UnknownConfigurationError,
     buildLaunchPlan,
     formatPlan,
+    isCustomPlanEntry,
     levenshtein,
     normalizeRunConfigs,
     resolveName,
@@ -346,5 +347,62 @@ describe('formatPlan', () => {
         const lines = formatPlan(plan).split('\n');
         assert.equal(lines[0], 'web  terminal  (preset)');
         assert.equal(lines[1], 'api  run       (cli)');
+    });
+});
+
+describe('buildLaunchPlan — custom command entries', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+
+    test('a custom entry resolves without any run configuration', () => {
+        const plan = buildLaunchPlan({ configs: [], preset: [seed] });
+        assert.deepEqual(plan, [{ name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'], source: 'preset' }]);
+        assert.equal(isCustomPlanEntry(plan[0]), true);
+    });
+
+    test('it keeps its place between run configurations', () => {
+        const plan = buildLaunchPlan({
+            configs: CONFIGS,
+            preset: [{ name: 'web', mode: 'run' }, seed, { name: 'api', mode: 'run' }],
+        });
+        assert.deepEqual(plan.map((entry) => entry.name), ['web', 'seed db', 'api']);
+        assert.deepEqual(plan.map(isCustomPlanEntry), [false, true, false]);
+    });
+
+    test('a custom entry and a run configuration of the same name are two entries', () => {
+        const plan = buildLaunchPlan({
+            configs: CONFIGS,
+            preset: [{ name: 'web', mode: 'run' }, { ...seed, name: 'web' }],
+        });
+        assert.equal(plan.length, 2);
+        assert.deepEqual(plan.map(isCustomPlanEntry), [false, true]);
+    });
+
+    test('a run configuration called like a key of the custom kind does not swallow it', () => {
+        const plan = buildLaunchPlan({
+            configs: [{ name: '["custom","seed db"]' }],
+            preset: [{ name: '["custom","seed db"]', mode: 'run' }, seed],
+        });
+        assert.equal(plan.length, 2);
+    });
+
+    test('two custom entries of one name merge: first position, last commands', () => {
+        const plan = buildLaunchPlan({
+            configs: CONFIGS,
+            preset: [seed, { name: 'web', mode: 'run' }, { ...seed, commands: ['echo later'] }],
+        });
+        assert.deepEqual(plan.map((entry) => entry.name), ['seed db', 'web']);
+        assert.deepEqual(plan[0].commands, ['echo later']);
+    });
+
+    test('the command line cannot name a custom entry: it only resolves against the IDE', () => {
+        assert.throws(
+            () => buildLaunchPlan({ configs: CONFIGS, preset: [seed], requests: [{ name: 'seed db', mode: 'run' }] }),
+            UnknownConfigurationError,
+        );
+    });
+
+    test('formatPlan shows it as an ordinary terminal entry of the preset', () => {
+        const plan = buildLaunchPlan({ configs: CONFIGS, preset: [seed] });
+        assert.equal(formatPlan(plan), 'seed db  terminal  (preset)');
     });
 });

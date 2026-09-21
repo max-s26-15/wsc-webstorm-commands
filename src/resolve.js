@@ -11,7 +11,9 @@
  * @typedef {{ name: string, description?: string, supportsDynamicLaunchOverrides?: boolean }} RunConfigInfo
  * @typedef {{ name: string, mode: import('./modes.js').LaunchMode }} RunRequest
  * @typedef {'preset' | 'cli'} PlanSource
- * @typedef {{ name: string, mode: import('./modes.js').LaunchMode, config: RunConfigInfo, source: PlanSource }} PlanEntry
+ * @typedef {{ name: string, mode: import('./modes.js').LaunchMode, config: RunConfigInfo, source: PlanSource }} ConfigPlanEntry
+ * @typedef {{ name: string, mode: 'terminal', commands: string[], source: PlanSource }} CustomPlanEntry
+ * @typedef {ConfigPlanEntry | CustomPlanEntry} PlanEntry
  */
 
 /** How close a name must be to be offered as "did you mean". */
@@ -201,6 +203,30 @@ function names(configs) {
 }
 
 /**
+ * A plan entry that runs the commands its preset wrote down, not a run configuration.
+ *
+ * @param {PlanEntry} entry
+ * @returns {entry is CustomPlanEntry}
+ */
+export function isCustomPlanEntry(entry) {
+    return 'commands' in entry;
+}
+
+/**
+ * The key an entry has in the plan's Map.
+ *
+ * JSON rather than a prefix: a run configuration may be called anything, `custom:x` included,
+ * and a plain concatenation would let it swallow a custom entry of that name.
+ *
+ * @param {'config' | 'custom'} kind
+ * @param {string} name
+ * @returns {string}
+ */
+function planKey(kind, name) {
+    return JSON.stringify([kind, name]);
+}
+
+/**
  * Build the full list of things to launch.
  *
  * Preset entries come first, in the order they were configured; command-line requests
@@ -210,7 +236,8 @@ function names(configs) {
  *
  * @param {object} args
  * @param {RunConfigInfo[]} args.configs - from get_run_configurations
- * @param {RunRequest[]} [args.preset] - entries of the active preset
+ * @param {Array<RunRequest & { commands?: string[] }>} [args.preset] - entries of the active
+ *   preset; one that carries `commands` is a custom entry and never touches `configs`
  * @param {RunRequest[]} [args.requests] - from the command line
  * @returns {PlanEntry[]}
  * @throws {UnknownConfigurationError|AmbiguousNameError} before anything is launched
@@ -220,14 +247,26 @@ export function buildLaunchPlan({ configs, preset = [], requests = [] }) {
     const plan = new Map();
 
     for (const entry of preset) {
+        if (entry.commands !== undefined) {
+            // Nothing to resolve: the commands are the definition. Two of one name (from two
+            // presets launched together) follow the rule below — first position, last wins.
+            plan.set(planKey('custom', entry.name), {
+                name: entry.name,
+                mode: 'terminal',
+                commands: entry.commands,
+                source: 'preset',
+            });
+            continue;
+        }
+
         const config = resolveName(entry.name, configs, { source: 'preset' });
-        plan.set(config.name, { name: config.name, mode: entry.mode, config, source: 'preset' });
+        plan.set(planKey('config', config.name), { name: config.name, mode: entry.mode, config, source: 'preset' });
     }
 
     for (const request of requests) {
         const config = resolveName(request.name, configs, { source: 'cli' });
         // Overriding keeps the preset's position; a genuinely new entry lands at the end.
-        plan.set(config.name, { name: config.name, mode: request.mode, config, source: 'cli' });
+        plan.set(planKey('config', config.name), { name: config.name, mode: request.mode, config, source: 'cli' });
     }
 
     return [...plan.values()];

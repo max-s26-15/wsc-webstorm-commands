@@ -16,6 +16,7 @@ import {
     findProjectRoot,
     getPreset,
     hasPreset,
+    isCustomEntry,
     listPresets,
     MIGRATIONS,
     migrateConfig,
@@ -665,5 +666,101 @@ describe('preset accessors', () => {
 
     test('listPresets returns names in insertion order', () => {
         assert.deepEqual(listPresets(SAMPLE), ['default', 'backend']);
+    });
+});
+
+describe('custom command entries', () => {
+    const custom = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+    const parse = (entries) => parseConfig(JSON.stringify({ version: 1, presets: { default: entries } }));
+
+    test('an entry with commands parses as a custom entry', () => {
+        const [entry] = parse([custom]).presets.default;
+        assert.deepEqual(entry, custom);
+        assert.equal(isCustomEntry(entry), true);
+    });
+
+    test('mode may be left out: a custom entry is always a terminal one', () => {
+        const [entry] = parse([{ name: 'seed db', commands: ['npm i'] }]).presets.default;
+        assert.equal(entry.mode, 'terminal');
+    });
+
+    test('a run-configuration entry is not a custom one', () => {
+        assert.equal(isCustomEntry({ name: 'web', mode: 'run' }), false);
+    });
+
+    for (const mode of ['run', 'debug']) {
+        test(`mode "${mode}" contradicts commands and is refused`, () => {
+            assert.throws(
+                () => parse([{ ...custom, mode }]),
+                (err) => err instanceof PresetConfigError && /mode must be "terminal"/.test(err.detail),
+            );
+        });
+    }
+
+    for (const [label, commands] of [
+        ['an empty list', []],
+        ['a string', 'npm i'],
+        ['an empty command', ['']],
+        ['a blank command', ['  ']],
+        ['a non-string', [1]],
+        ['a command with a newline', ['npm i\nnpm run seed']],
+        ['a command with a carriage return', ['a\rb']],
+        ['a command with an escape character', ['echo \u001b[2J']],
+        ['a command with a NUL', ['a\u0000b']],
+        ['a command with DEL', ['a\u007fb']],
+        ['a command with a C1 control', ['a\u0085b']],
+    ]) {
+        test(`commands that are ${label} are refused, naming the entry`, () => {
+            assert.throws(
+                () => parse([{ name: 'ok', mode: 'run' }, { name: 'seed db', commands }]),
+                (err) => err instanceof PresetConfigError
+                    && /preset "default" entry 1/.test(err.detail)
+                    && /"commands" must be a non-empty list of non-empty strings without control characters/.test(err.detail),
+            );
+        });
+    }
+
+    test('a tab inside a name is fine', () => {
+        const [entry] = parse([{ name: 'seed\tdb', commands: ['echo hi'] }]).presets.default;
+        assert.equal(entry.name, 'seed\tdb');
+    });
+
+    test('a tab inside a command is fine', () => {
+        const [entry] = parse([{ name: 'seed db', commands: ['printf "a\tb"'] }]).presets.default;
+        assert.deepEqual(entry.commands, ['printf "a\tb"']);
+    });
+
+    for (const [label, name] of [
+        ['a newline', 'build: npm run build\n  lint: npm run lint'],
+        ['a carriage return', 'a\rb'],
+        ['an escape sequence', 'x\u001b[2J\u001b[H'],
+        ['a NUL', 'a\u0000b'],
+        ['DEL', 'a\u007fb'],
+        ['a C1 control', 'a\u009bb'],
+    ]) {
+        test(`a custom name with ${label} is refused, naming the entry`, () => {
+            assert.throws(
+                () => parse([{ name: 'ok', mode: 'run' }, { name, commands: ['echo hi'] }]),
+                (err) => err instanceof PresetConfigError
+                    && /preset "default" entry 1/.test(err.detail)
+                    && /"name" must not contain control characters/.test(err.detail),
+            );
+        });
+    }
+
+    test('serializes commands right after mode, keeps unknown keys, and rewriting is a no-op', () => {
+        const text = serializeConfig(parse([{ zeta: 1, commands: ['npm i'], name: 'seed db', mode: 'terminal' }]));
+        const written = JSON.parse(text).presets.default[0];
+
+        assert.deepEqual(Object.keys(written), ['name', 'mode', 'commands', 'zeta']);
+        assert.equal(serializeConfig(parseConfig(text)), text);
+    });
+
+    test('a custom entry may be called like a member of Object.prototype', () => {
+        for (const name of ['constructor', '__proto__', 'toString']) {
+            const [entry] = parse([{ name, commands: ['echo hi'] }]).presets.default;
+            assert.equal(entry.name, name);
+            assert.deepEqual(entry.commands, ['echo hi']);
+        }
     });
 });

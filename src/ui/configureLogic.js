@@ -6,10 +6,39 @@
  * looking like — are unit-tested without driving a terminal UI.
  */
 
+import { customCommandLine } from '../exec/customCommands.js';
 import { DEFAULT_MODE } from '../modes.js';
+import { CONTROL_CHARACTERS, isCustomEntry } from '../presets/store.js';
 
 // Mode assigned to a configuration the user checked but was never asked about.
 export { DEFAULT_MODE };
+
+const CUSTOM_PREFIX = '\u0000custom\u0000';
+
+/**
+ * A custom entry's value in the checkbox.
+ *
+ * Distinct from any configuration name — those are the raw names the IDE reported — so a
+ * custom entry and a run configuration of the same name (a hand-edited file can have both)
+ * are two different choices and cannot answer for one another.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+export function customChoiceValue(name) {
+    return `${CUSTOM_PREFIX}${name}`;
+}
+
+/** @param {string} value */
+const isCustomChoiceValue = (value) => value.startsWith(CUSTOM_PREFIX);
+
+/**
+ * Identity of an entry across two versions of a preset. Kind first, so a custom entry and a
+ * configuration of one name are not the same entry.
+ *
+ * @param {PresetEntry} entry
+ */
+const entryKey = (entry) => JSON.stringify([isCustomEntry(entry) ? 'custom' : 'config', entry.name]);
 
 /**
  * @typedef {import('../resolve.js').RunConfigInfo} RunConfigInfo
@@ -30,9 +59,12 @@ export { DEFAULT_MODE };
  *   rather than let them vanish silently on save.
  */
 export function buildInitialSelection(runConfigs, preset = []) {
-    const modes = new Map(preset.map((entry) => [entry.name, entry.mode]));
+    // Custom entries refer to nothing in the IDE, so they take no part in the by-name
+    // matching: a hand-edited custom "web" must not tick the run configuration "web".
+    const references = preset.filter((entry) => !isCustomEntry(entry));
+    const modes = new Map(references.map((entry) => [entry.name, entry.mode]));
 
-    const choices = runConfigs.map((config) => ({
+    const ideChoices = runConfigs.map((config) => ({
         name: config.description ? `${config.name}  (${config.description})` : config.name,
         value: config.name,
         checked: modes.has(config.name),
@@ -40,9 +72,18 @@ export function buildInitialSelection(runConfigs, preset = []) {
     }));
 
     const known = new Set(runConfigs.map((config) => config.name));
-    const stale = preset.filter((entry) => !known.has(entry.name));
+    const stale = references.filter((entry) => !known.has(entry.name));
 
-    return { choices, stale };
+    // After the IDE's list, in the order the preset has them; always checked, because
+    // unchecking is how one is deleted.
+    const customChoices = preset.filter(isCustomEntry).map((entry) => ({
+        name: `⌘ ${entry.name} — ${customCommandLine(entry.commands)}`,
+        value: customChoiceValue(entry.name),
+        checked: true,
+        mode: entry.mode,
+    }));
+
+    return { choices: [...ideChoices, ...customChoices], stale };
 }
 
 /**
@@ -56,8 +97,8 @@ export function buildInitialSelection(runConfigs, preset = []) {
  * @returns {string[]} in the order they appear in `selection`
  */
 export function pendingModeQuestions(selection, preset = []) {
-    const known = new Set(preset.map((entry) => entry.name));
-    return selection.filter((name) => !known.has(name));
+    const known = new Set(preset.filter((entry) => !isCustomEntry(entry)).map((entry) => entry.name));
+    return selection.filter((value) => !isCustomChoiceValue(value) && !known.has(value));
 }
 
 /**
@@ -71,21 +112,25 @@ export function pendingModeQuestions(selection, preset = []) {
  * @param {string[]} selection - values returned by the checkbox
  * @param {Record<string, import('../modes.js').LaunchMode>} [modes] - answers, plus any carried-over modes
  * @param {PresetEntry[]} [preset] - the preset before editing
+ * @param {PresetEntry[]} [added] - custom entries created on this screen
  * @returns {PresetEntry[]}
  */
-export function applyAnswersToPreset(selection, modes = {}, preset = []) {
-    const selected = new Set(selection);
+export function applyAnswersToPreset(selection, modes = {}, preset = [], added = []) {
+    const selectedNames = new Set(selection.filter((value) => !isCustomChoiceValue(value)));
+    const keptCustom = new Set(selection.filter(isCustomChoiceValue));
 
     const kept = preset
-        .filter((entry) => selected.has(entry.name))
-        .map((entry) => ({ ...entry, mode: answered(modes, entry.name) ?? entry.mode }));
+        .filter((entry) =>
+            isCustomEntry(entry) ? keptCustom.has(customChoiceValue(entry.name)) : selectedNames.has(entry.name))
+        .map((entry) =>
+            isCustomEntry(entry) ? entry : { ...entry, mode: answered(modes, entry.name) ?? entry.mode });
 
-    const keptNames = new Set(kept.map((entry) => entry.name));
-    const added = selection
-        .filter((name) => !keptNames.has(name))
+    const keptNames = new Set(kept.filter((entry) => !isCustomEntry(entry)).map((entry) => entry.name));
+    const appended = selection
+        .filter((value) => !isCustomChoiceValue(value) && !keptNames.has(value))
         .map((name) => ({ name, mode: answered(modes, name) ?? DEFAULT_MODE }));
 
-    return [...kept, ...added];
+    return [...kept, ...appended, ...added];
 }
 
 /**
@@ -110,13 +155,16 @@ function answered(modes, name) {
  * @returns {{ added: string[], removed: string[], changed: string[], unchanged: boolean }}
  */
 export function diffPreset(before, after) {
-    const beforeModes = new Map(before.map((entry) => [entry.name, entry.mode]));
-    const afterModes = new Map(after.map((entry) => [entry.name, entry.mode]));
+    // Compares kind, name and mode only, never `commands`: no path through `--configure` can
+    // change the commands of an existing custom entry (editing is out of scope, and re-adding
+    // a name is refused). If entry editing is ever added, this has to learn to compare them.
+    const beforeModes = new Map(before.map((entry) => [entryKey(entry), entry.mode]));
+    const afterModes = new Map(after.map((entry) => [entryKey(entry), entry.mode]));
 
-    const added = after.filter((entry) => !beforeModes.has(entry.name)).map((entry) => entry.name);
-    const removed = before.filter((entry) => !afterModes.has(entry.name)).map((entry) => entry.name);
+    const added = after.filter((entry) => !beforeModes.has(entryKey(entry))).map((entry) => entry.name);
+    const removed = before.filter((entry) => !afterModes.has(entryKey(entry))).map((entry) => entry.name);
     const changed = after
-        .filter((entry) => beforeModes.has(entry.name) && beforeModes.get(entry.name) !== entry.mode)
+        .filter((entry) => beforeModes.has(entryKey(entry)) && beforeModes.get(entryKey(entry)) !== entry.mode)
         .map((entry) => `${entry.name} → ${entry.mode}`);
 
     return {
@@ -125,4 +173,24 @@ export function diffPreset(before, after) {
         changed,
         unchanged: added.length === 0 && removed.length === 0 && changed.length === 0,
     };
+}
+
+/**
+ * Why a name cannot be used for a new custom command, or `null` when it can.
+ *
+ * `taken` is every custom name the preset had when the screen opened, plus what was added
+ * since — including one just unchecked: re-adding it in the same run would look, to the
+ * diff, like nothing changed and the new commands would never be saved.
+ *
+ * @param {string} rawName - trimmed here; the caller may pass the line as typed
+ * @param {{ taken?: string[], ideNames?: string[] }} [opts]
+ * @returns {string | null}
+ */
+export function validateCustomName(rawName, { taken = [], ideNames = [] } = {}) {
+    const name = rawName.trim();
+    if (name === '') return 'a name is required';
+    if (CONTROL_CHARACTERS.test(name)) return 'a name cannot contain control characters';
+    if (taken.includes(name)) return `"${name}" is already a custom command in this preset`;
+    if (ideNames.includes(name)) return `"${name}" is the name of a run configuration; pick a different name`;
+    return null;
 }

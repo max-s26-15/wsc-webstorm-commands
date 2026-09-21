@@ -19,9 +19,12 @@
  * are an options object instead, matching buildLaunchPlan() next door.
  */
 import { debugConfigurationCall, runConfigurationCall, terminalCommandCall } from '../mcp/execute.js';
+import { isCustomPlanEntry } from '../resolve.js';
+import { customCommandLine } from './customCommands.js';
 
 /**
  * @typedef {import('../resolve.js').PlanEntry} PlanEntry
+ * @typedef {import('../resolve.js').ConfigPlanEntry} ConfigPlanEntry
  * @typedef {import('../resolve.js').RunConfigInfo} RunConfigInfo
  * @typedef {'run-window' | 'terminal'} ExecTarget
  * @typedef {{
@@ -43,14 +46,15 @@ import { debugConfigurationCall, runConfigurationCall, terminalCommandCall } fro
  * Where the shell command line behind a terminal call came from.
  *   'idea' — read out of what WebStorm saved to .idea/, so it is the real definition.
  *   'name' — rebuilt from the configuration's name, because .idea/ had no entry for it.
+ *   'custom' — a preset entry's own commands, joined; nothing was looked up.
  * Absent means nothing was consulted: buildExecutionPlan() was called without a
  * commandFor resolver, so there is no lookup to report the outcome of.
- * @typedef {'idea' | 'name'} CommandSource
+ * @typedef {'idea' | 'name' | 'custom'} CommandSource
  *
  * How a terminal command line is obtained for one plan entry. Injected rather than
  * imported so this module stays pure and free of any dependency on the filesystem —
  * see src/exec/ideaCommands.js for the resolver the CLI actually passes.
- * @typedef {(entry: PlanEntry, opts: { debugPort?: number }) => {
+ * @typedef {(entry: ConfigPlanEntry, opts: { debugPort?: number }) => {
  *   command: string,
  *   source?: CommandSource,
  * }} CommandFor
@@ -324,7 +328,8 @@ export function usesTerminal(entry, target, opts = {}) {
  * @returns {boolean}
  */
 export function needsTerminalCommands(plan, target, opts = {}) {
-    return plan.some((entry) => usesTerminal(entry, target, opts));
+    // A custom entry carries its own command line: there is nothing in `.idea/` to read for it.
+    return plan.some((entry) => !isCustomPlanEntry(entry) && usesTerminal(entry, target, opts));
 }
 
 /**
@@ -374,6 +379,21 @@ export function buildExecutionPlan({
     let debugSeen = 0;
 
     const calls = plan.map((entry) => {
+        if (isCustomPlanEntry(entry)) {
+            // Always a Terminal tab, whatever the target: the entry asked for a command line.
+            // No commandFor (nothing to look up), no inspector port (nothing is debugged), no
+            // note (nothing was rerouted), and a tab named after the entry like every other.
+            /** @type {McpCall} */
+            const custom = {
+                name: entry.name,
+                mode: entry.mode,
+                ...terminalCommandCall(customCommandLine(entry.commands)),
+                commandSource: 'custom',
+                tabName: entry.name,
+            };
+            return custom;
+        }
+
         const viaTerminal = usesTerminal(entry, target, { debugTool });
         const viaDebugTool = entry.mode === 'debug' && !viaTerminal;
         // Counted over the debug entries that use an inspector port — the terminal ones —
