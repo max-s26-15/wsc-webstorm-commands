@@ -74,6 +74,30 @@ describe('completeCommand — sources', () => {
         }
     });
 
+    test('a leading ~ in --project means the home directory', async () => {
+        const home = await tmpDir('wsc-home-');
+        const elsewhere = await tmpDir('wsc-elsewhere-');
+        const previous = process.env.HOME;
+        try {
+            // The home directory is a project itself, and so is one folder below it.
+            for (const dir of [home.dir, path.join(home.dir, 'work', 'app')]) {
+                await fs.mkdir(path.join(dir, '.idea'), { recursive: true });
+                await fs.writeFile(path.join(dir, '.idea', 'webstorm-commands.json'), PRESETS);
+            }
+            process.env.HOME = home.dir;
+
+            for (const project of ['~', '~/', '~/work/app']) {
+                const { out } = await complete(elsewhere.dir, ['zsh', `wsc --project ${project} --preset `]);
+                assert.equal(out, 'values\ndefault\nbackend\n', project);
+            }
+        } finally {
+            if (previous === undefined) delete process.env.HOME;
+            else process.env.HOME = previous;
+            await elsewhere.cleanup();
+            await home.cleanup();
+        }
+    });
+
     test('--project completes directories by asking the shell to', async () => {
         const project = await tmpIdeaProject();
         try {

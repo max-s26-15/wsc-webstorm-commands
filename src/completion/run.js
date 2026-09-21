@@ -8,6 +8,7 @@
  * "print something". WSC_COMPLETE_DEBUG=1 is the way to find out why it offered less.
  */
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { readIdeaRunConfigs } from '../fallback/ideaRunConfigs.js';
@@ -40,7 +41,10 @@ async function projectRootFor(words, cwd) {
     const explicit = findProjectFlag(words);
     if (explicit === undefined) return await findProjectRoot(cwd);
 
-    const root = path.resolve(cwd, explicit);
+    // The shell has not expanded the `~` of a word it is still completing, and `--project ~/x`
+    // is what people type. `~user` is not expanded: it is not worth a passwd lookup per Tab.
+    const typed = explicit === '~' || explicit.startsWith('~/') ? path.join(os.homedir(), explicit.slice(1)) : explicit;
+    const root = path.resolve(cwd, typed);
     const stats = await fs.stat(path.join(root, CONFIG_DIR)).catch(() => null);
     return stats?.isDirectory() ? root : null;
 }
