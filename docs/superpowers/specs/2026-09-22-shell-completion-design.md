@@ -43,7 +43,9 @@ src/completion/tokenize.js  чиста: рядок до курсора → { tok
 src/completion/candidates.js чиста: (tokens, partial, {presets, configs}) → { directive, values }
 src/completion/format.js    чиста: кандидати → текст для конкретної оболонки (zsh сирі, bash екрановані)
 src/completion/run.js       нечиста: корінь проєкту → читання .idea/ і пресетів → друк. Не кидає.
+src/completion/shells.js    COMPLETION_SHELLS = ['zsh', 'bash'] і isCompletionShell()
 src/completion/scripts.js   шаблони обгорток zsh і bash (рядки-константи)
+src/modes.js                + FALLBACK_MODES (переїжджає з ui/mcpUnavailablePrompt.js, який реекспортує)
 src/cli.js                  прапорець --completion: друкує скрипт оболонки, ніколи не ходить до IDE
 src/args.js                 `completion` додається в OPTIONS
 ```
@@ -93,11 +95,12 @@ src/args.js                 `completion` додається в OPTIONS
 
 1. **Значення прапорця.** Якщо `partial` має вигляд `--flag=…`, кандидати мають префікс `--flag=`.
    Якщо попередній токен — прапорець, що бере значення, і `partial` не починається з `-`:
-   - `--target` → `run`, `debug`, `terminal`
-   - `--fallback` → `retry`, `terminal`
-   - `--completion` → `zsh`, `bash`
+   - `--target` → `run-window`, `terminal` (`EXEC_TARGETS` у `planBuilder.js`)
+   - `--fallback` → `retry`, `terminal` (`FALLBACK_MODES`)
+   - `--completion` → `zsh`, `bash` (`COMPLETION_SHELLS`)
    - `--preset` → назви пресетів (із `readPresets`)
-   - `--project` → директива `dirs`
+   - `--project` → директива `dirs`. У формі `--project=…` — `none`: `=` розриває слово в bash, і
+     завершення каталогів там було б ненадійним
    - `--mcp-port`, `--debug-port` → `none`
 2. **Прапорці.** `partial` починається з `-` → прапорці з `OPTIONS` (довгі й короткі), відфільтровані за
    префіксом. Список береться з `OPTIONS`, а не з власної копії.
@@ -126,17 +129,25 @@ src/args.js                 `completion` додається в OPTIONS
 Конфігурація, яку IDE ще не записала на диск, не з'явиться в списку. Це єдина відмінність від
 `get_run_configurations`, і вона прийнятна: інша ціна — MCP-з'єднання на кожне Tab.
 
-**Збої.** Будь-яка помилка (немає `.idea/`, порожній `workspace.xml`, `PresetConfigError`, несподіваний
-виняток) дає директиву `none`, exit 0 і **порожній stderr**: трасування в рядку запрошення гірше за
-відсутність підказок. Змінна `WSC_COMPLETE_DEBUG=1` друкує причину в stderr, бо тиша ховає баги.
+**Збої.** Джерело, яке не вдалося прочитати (немає `.idea/`, порожній `workspace.xml`,
+`PresetConfigError`), вважається порожнім: прапорці й решта джерел усе одно працюють. Неочікуваний
+виняток або невідома оболонка дають директиву `none`. У всіх випадках exit 0 і **порожній stderr**:
+трасування в рядку запрошення гірше за відсутність підказок. Змінна `WSC_COMPLETE_DEBUG=1` друкує
+причину в stderr, бо тиша ховає баги.
 Джерела незалежні: зламаний `webstorm-commands.json` означає «пресетів немає», але назви конфігурацій із
 `.idea/` усе одно пропонуються, і навпаки.
 
 **Швидкість.** Замір на цій машині: `wsc --version` = 0,21 с; голий `node` = 0,05 с; імпорт `args.js`
 15 мс, `ideaRunConfigs.js` 23 мс, `store.js` ~0 мс. Очікуваний бюджет Tab ≲120 мс.
 
-- Закріплюється тестом на **граф імпортів**, а не таймером: модулі `src/completion/*` не мають
-  транзитивно імпортувати `cli.js`, `mcp/` чи `@inquirer/*`. Таймери в тестах флейкові.
+- Закріплюється тестом на **статичний граф імпортів**, а не таймером (таймери в тестах флейкові):
+  модулі `src/completion/*` не мають транзитивно імпортувати `src/cli.js`, будь-що з `src/ui/` і жоден
+  пакет, крім `node:*`. `src/mcp/` у графі **дозволений**: `ideaRunConfigs.js` тягне його через
+  `exec/planBuilder.js` → `mcp/execute.js` → `mcp/client.js`, але SDK там імпортується динамічно, тож
+  вартості не додає. Замір трьох модулів (`args.js`, `ideaRunConfigs.js`, `store.js`) разом: 28–32 мс.
+- Два значення, потрібні автодоповненню, лежать у модулях, що статично тягнуть `@inquirer/prompts`
+  (`FALLBACK_MODES` у `ui/mcpUnavailablePrompt.js`). Вони переїжджають у `src/modes.js` і реекспортуються
+  звідти — так уже зроблено з `MODES`, і `test/modes.test.js` закріплює тотожність.
 - Відкрите питання, яке знімає вимір у плані реалізації: `readIdeaRunConfigs()` також розв'язує
   «project node» через `.nvmrc`. Якщо це помітна частка бюджету, додається опція «без інтерпретаторів»
   (автодоповненню інтерпретатор не потрібен).
@@ -152,12 +163,16 @@ src/args.js                 `completion` додається в OPTIONS
 - **Реальний bash.** Згенерована функція викликається в `bash -c` із виставленими `COMP_LINE`,
   `COMP_POINT` і `COMP_WORDBREAKS`; результат читається з `COMPREPLY`. У тимчасовому проєкті з
   `tmpIdeaProject()`.
-- **Реальний zsh.** Через `zpty`, лише коли `zsh` є в `PATH`, інакше skip із причиною. Плюс ручний
-  чек-лист через pty (`script -qec`), як для `--configure` і phase-7 промпту.
+- **Реальний zsh.** Лише коли `zsh` є в `PATH`, інакше skip із причиною: `zsh -n` перевіряє синтаксис
+  згенерованого скрипта, а сама функція запускається в `zsh -f` із підставленими `BUFFER`/`CURSOR` і
+  заглушками `compadd`/`compdef`, які друкують свої аргументи. Це перевіряє розбір директиви й
+  аргументи `compadd`, але не сам ZLE, тож справжній Tab перевіряється вручну через pty (`script -qec`),
+  як для `--configure` і phase-7 промпту. (`zpty` розглядався і відхилений: тест на ньому флейковий.)
 - **Граф імпортів.** Тест обходить відносні імпорти від `src/completion/run.js` і перевіряє відсутність
   `cli.js`, `mcp/client.js`, `@modelcontextprotocol/*`, `@inquirer/*`.
-- **Збої.** Немає `.idea/`, зламаний `webstorm-commands.json`, каталог без `workspace.xml` — у всіх
-  випадках `none`, exit 0, порожній stderr; з `WSC_COMPLETE_DEBUG=1` причина в stderr.
+- **Збої.** Немає `.idea/`, зламаний `webstorm-commands.json`, каталог без `workspace.xml` — порожнє
+  джерело, решта працює, exit 0, порожній stderr; невідома оболонка — `none`. З `WSC_COMPLETE_DEBUG=1`
+  причина в stderr.
 - **`bin/wsc.js`.** Тест запускає його як процес із `__complete` і без нього; перший не завантажує
   `cli.js`.
 - **`--completion`.** Рядок у таблиці прапорців `test/cli.integration.test.js`: друкує скрипт у stdout,
