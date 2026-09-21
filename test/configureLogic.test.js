@@ -7,8 +7,10 @@ import {
     DEFAULT_MODE,
     applyAnswersToPreset,
     buildInitialSelection,
+    customChoiceValue,
     diffPreset,
     pendingModeQuestions,
+    validateCustomName,
 } from '../src/ui/configureLogic.js';
 
 const require = createRequire(import.meta.url);
@@ -239,5 +241,98 @@ describe('diffPreset', () => {
         assert.deepEqual(diff.changed, ['web → debug']);
         assert.deepEqual(diff.added, ['docs']);
         assert.deepEqual(diff.removed, ['api']);
+    });
+});
+
+describe('custom command entries — the checkbox and what it saves', () => {
+    const custom = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+
+    test('a saved custom entry is offered checked, after the IDE list, labelled with its commands', () => {
+        const { choices } = buildInitialSelection(CONFIGS, [custom]);
+
+        assert.equal(choices.length, 14);
+        assert.deepEqual(choices[13], {
+            name: '⌘ seed db — npm i && npm run seed',
+            value: customChoiceValue('seed db'),
+            checked: true,
+            mode: 'terminal',
+        });
+    });
+
+    test('it is not reported as stale: it refers to nothing in the IDE', () => {
+        assert.deepEqual(buildInitialSelection(CONFIGS, [custom]).stale, []);
+    });
+
+    test('a custom entry called like an IDE configuration does not check that configuration', () => {
+        const { choices } = buildInitialSelection(CONFIGS, [{ ...custom, name: 'web' }]);
+        assert.equal(choices.find((c) => c.value === 'web').checked, false);
+    });
+
+    test('pendingModeQuestions never asks about a custom choice, nor mistakes its name for a known configuration', () => {
+        const preset = [{ ...custom, name: 'web' }];
+        assert.deepEqual(pendingModeQuestions([customChoiceValue('web'), 'web'], preset), ['web']);
+    });
+
+    test('a checked custom entry keeps its place and its commands', () => {
+        const preset = [{ name: 'web', mode: 'run' }, custom, { name: 'api', mode: 'run' }];
+        const after = applyAnswersToPreset(['web', customChoiceValue('seed db'), 'api'], {}, preset);
+        assert.deepEqual(after, preset);
+    });
+
+    test('unchecking it removes it', () => {
+        const preset = [{ name: 'web', mode: 'run' }, custom];
+        assert.deepEqual(applyAnswersToPreset(['web'], {}, preset), [{ name: 'web', mode: 'run' }]);
+    });
+
+    test('new custom entries are appended after the configurations, in the order given', () => {
+        const added = [
+            { name: 'a', mode: 'terminal', commands: ['echo a'] },
+            { name: 'b', mode: 'terminal', commands: ['echo b'] },
+        ];
+        const after = applyAnswersToPreset(['web'], { web: 'run' }, [], added);
+        assert.deepEqual(after.map((entry) => entry.name), ['web', 'a', 'b']);
+    });
+
+    test('diffPreset names a custom entry, and tells it from a configuration of the same name', () => {
+        const before = [{ name: 'web', mode: 'run' }];
+        const after = [{ name: 'web', mode: 'run' }, { name: 'web', mode: 'terminal', commands: ['x'] }];
+        const diff = diffPreset(before, after);
+
+        assert.deepEqual(diff.added, ['web']);
+        assert.deepEqual(diff.removed, []);
+        assert.equal(diff.unchanged, false);
+    });
+
+    test('diffPreset of an untouched custom entry is unchanged', () => {
+        assert.equal(diffPreset([custom], [{ ...custom }]).unchanged, true);
+    });
+});
+
+describe('validateCustomName', () => {
+    const opts = { taken: ['seed db'], ideNames: ['web', 'api'] };
+
+    test('accepts a fresh name', () => {
+        assert.equal(validateCustomName('lint all', opts), null);
+    });
+
+    test('refuses an empty or blank name', () => {
+        assert.equal(validateCustomName('', opts), 'a name is required');
+        assert.equal(validateCustomName('   ', opts), 'a name is required');
+    });
+
+    test('refuses a name a custom entry of the preset already has', () => {
+        assert.equal(validateCustomName('seed db', opts), '"seed db" is already a custom command in this preset');
+    });
+
+    test('refuses the name of a run configuration', () => {
+        assert.equal(
+            validateCustomName('web', opts),
+            '"web" is the name of a run configuration; pick a different name',
+        );
+    });
+
+    test('a prototype member is an ordinary name', () => {
+        assert.equal(validateCustomName('constructor', opts), null);
+        assert.equal(validateCustomName('__proto__', opts), null);
     });
 });
