@@ -11,6 +11,8 @@ import {
     passedFlags,
     splitPresetNames,
 } from './args.js';
+import { completionScript } from './completion/scripts.js';
+import { COMPLETION_SHELLS, isCompletionShell } from './completion/shells.js';
 import {
     DEBUG_PORT_BASE,
     DEFAULT_TARGET,
@@ -24,8 +26,6 @@ import {
     guessedCommands,
     needsTerminalCommands,
 } from './exec/planBuilder.js';
-import { completionScript } from './completion/scripts.js';
-import { COMPLETION_SHELLS, isCompletionShell } from './completion/shells.js';
 import { announceCustomCommands } from './exec/customCommands.js';
 import { guessedCommandNote, ideaCommandResolver } from './exec/ideaCommands.js';
 import { warnBusyDebugPorts } from './exec/inspectorPorts.js';
