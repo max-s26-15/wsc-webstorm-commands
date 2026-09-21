@@ -55,7 +55,7 @@ describe('complete — configuration names', () => {
 describe('complete — flags', () => {
     test('two dashes offer the long flags, taken from OPTIONS', () => {
         const flags = at('--').values;
-        for (const flag of ['--preset', '--target', '--dry-run', '--fallback', '--configure']) {
+        for (const flag of ['--preset', '--target', '--dry-run', '--fallback', '--completion', '--configure']) {
             assert.ok(flags.includes(flag), `${flag} missing`);
         }
         assert.equal(flags.includes('-c'), false);
@@ -72,11 +72,14 @@ describe('complete — flags', () => {
 });
 
 describe('complete — flag values', () => {
-    // `--completion` joins OPTIONS only in Task 8, so its own value list is asserted there.
     test('--target and --fallback offer their fixed values', () => {
         assert.deepEqual(at('--target ').values, ['run-window', 'terminal']);
         assert.deepEqual(at('--target te').values, ['terminal']);
         assert.deepEqual(at('--fallback ').values, ['retry', 'terminal']);
+    });
+
+    test('--completion offers the shells', () => {
+        assert.deepEqual(at('--completion ').values, ['zsh', 'bash']);
     });
 
     test('the --flag=value form keeps the flag in every candidate', () => {

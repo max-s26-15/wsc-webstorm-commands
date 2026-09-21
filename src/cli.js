@@ -24,6 +24,8 @@ import {
     guessedCommands,
     needsTerminalCommands,
 } from './exec/planBuilder.js';
+import { completionScript } from './completion/scripts.js';
+import { COMPLETION_SHELLS, isCompletionShell } from './completion/shells.js';
 import { announceCustomCommands } from './exec/customCommands.js';
 import { guessedCommandNote, ideaCommandResolver } from './exec/ideaCommands.js';
 import { warnBusyDebugPorts } from './exec/inspectorPorts.js';
@@ -78,6 +80,7 @@ Options:
       --dry-run         print what would be launched, without launching it
       --fallback <how>  when the IDE cannot be reached: retry (poll for it) or terminal
                         (launch without it). Default: ask, if there is a terminal to ask in
+      --completion <sh> print a Tab-completion script (zsh or bash), and stop
   -h, --help            show this help
   -v, --version         show version
 
@@ -91,6 +94,7 @@ Examples:
   wsc -c                              edit the default preset interactively
   wsc --fallback=retry web            wait for WebStorm to come up, then launch
   wsc --fallback=terminal web         launch in OS terminal tabs, without WebStorm
+  source <(wsc --completion zsh)      in ~/.zshrc: Tab completes flags, presets and configurations
 
 :debug opens a real Debug tab when the wsc IDE plugin is installed (see ide-plugin/README.md).
 Without it the IDE's MCP API has no debug parameter, so the command runs in a Terminal tab
@@ -512,6 +516,26 @@ async function run(argv, deps) {
     }
     if (values.version) {
         log.out(pkg.version);
+        return 0;
+    }
+
+    // --completion is a fourth intent, and the only one that touches nothing: it prints a
+    // script and stops, so it is decided before the project, the presets or the IDE come
+    // into it. Every other intent refuses a command line that means two things at once, and
+    // so does this one — a `wsc --completion zsh web` that printed the script and dropped
+    // `web` would look like it had worked.
+    if (Object.hasOwn(values, 'completion')) {
+        const others = Object.keys(values).filter((flag) => flag !== 'completion');
+        if (typed.length > 0 || others.length > 0) {
+            throw new UsageError(
+                '--completion prints a script and takes nothing else: no configuration names, no other flags',
+            );
+        }
+        const shell = values.completion;
+        if (!isCompletionShell(shell)) {
+            throw new UsageError(`--completion: expected one of ${COMPLETION_SHELLS.join(', ')}, got "${shell}"`);
+        }
+        stdout.write(completionScript(shell));
         return 0;
     }
 
