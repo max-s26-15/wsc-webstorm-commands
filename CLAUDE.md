@@ -220,7 +220,7 @@ exercises it.
   `name: command` line on **every** launch, not only `--dry-run`: `webstorm-commands.json` sits in `.idea/`
   and is usually committed, so a cloned repository would otherwise run shell text the first time `wsc` is
   typed. The no-IDE path needs no catalogue for a preset made only of custom entries (the "WebStorm has
-  saved no run configurations" error is raised only when something needs one, after the plan is known),
+  saved no run configurations" error is raised only when a positional or a non-custom preset entry needs a catalogue),
   and `buildTabs()` never reads `entry.config` for them. In `--configure` the checkbox value of a custom
   entry is `customChoiceValue(name)`, distinct from a configuration name, because a hand-edited file can
   hold both under one name; an IDE that reports no configurations is no longer an error by itself (only the
