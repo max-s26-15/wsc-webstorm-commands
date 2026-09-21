@@ -91,7 +91,13 @@ export async function completeCommand(args, deps = {}) {
      */
     const report = (what, err) => {
         if (env.WSC_COMPLETE_DEBUG !== '1') return;
-        stderr.write(`wsc completion: ${what}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
+        try {
+            stderr.write(
+                `wsc completion: ${what}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+            );
+        } catch {
+            // A diagnostic that cannot be printed is not worth failing the completion for.
+        }
     };
 
     try {
@@ -111,7 +117,11 @@ export async function completeCommand(args, deps = {}) {
         stdout.write(formatCompletion(completion, shell, typed, wordBreaks || undefined));
     } catch (err) {
         report('unexpected', err);
-        stdout.write('none\n');
+        try {
+            stdout.write('none\n');
+        } catch {
+            // The stream itself is what failed; there is nowhere left to say so.
+        }
     }
     return 0;
 }

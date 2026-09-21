@@ -156,6 +156,44 @@ describe('completeCommand — bash', () => {
     });
 });
 
+describe('completeCommand — a broken output stream', () => {
+    const broken = {
+        write() {
+            throw new Error('boom');
+        },
+    };
+
+    test('a stdout that throws still resolves to 0', async () => {
+        const project = await tmpIdeaProject();
+        try {
+            const code = await completeCommand(['zsh', 'wsc a'], {
+                cwd: project.dir,
+                env: {},
+                stdout: broken,
+                stderr: { write: () => true },
+            });
+            assert.equal(code, 0);
+        } finally {
+            await project.cleanup();
+        }
+    });
+
+    test('a stderr that throws under WSC_COMPLETE_DEBUG=1 does not reject either', async () => {
+        const project = await tmpIdeaProject({ presets: '{ not json' });
+        try {
+            const code = await completeCommand(['zsh', 'wsc --preset '], {
+                cwd: project.dir,
+                env: { WSC_COMPLETE_DEBUG: '1' },
+                stdout: broken,
+                stderr: broken,
+            });
+            assert.equal(code, 0);
+        } finally {
+            await project.cleanup();
+        }
+    });
+});
+
 test('the catalogue is read from .idea/, not the current directory', async () => {
     // A config named after a directory that exists beside the project must still be a name.
     const project = await tmpIdeaProject();
