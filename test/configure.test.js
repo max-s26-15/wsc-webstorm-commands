@@ -7,6 +7,7 @@ import { createLogger } from '../src/log.js';
 import { configPath, emptyConfig, readPresets } from '../src/presets/store.js';
 import { normalizeRunConfigs } from '../src/resolve.js';
 import { runConfigure } from '../src/ui/configure.js';
+import { customChoiceValue } from '../src/ui/configureLogic.js';
 import { fakeStream } from '../test-utils/capture.js';
 import { tmpProject } from '../test-utils/tmp-dir.js';
 
@@ -20,10 +21,14 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
  * @param {string} opts.dir
  * @param {string[]} [opts.checked] - what the checkbox returns
  * @param {Array<import('../src/modes.js').LaunchMode>} [opts.modes] - answers to the mode questions, in order
+ * @param {boolean[]} [opts.confirms] - answers to "add a custom command?", in order; false once they run out
+ * @param {string[]} [opts.inputs] - answers to the name and command lines, in order
+ * @param {object[]} [opts.configs] - what the IDE reports; the 13-configuration fixture by default
  * @param {object} [opts.config] - preset file contents as already read
  * @param {Error} [opts.throws] - make the first prompt throw (Ctrl-C, for instance)
  * @param {Error} [opts.throwsOnSelect] - make the *mode* prompt throw instead, so the
  *   second try/catch is exercised in its own right
+ * @param {Error} [opts.throwsOnConfirm] - make the custom-command question throw
  * @param {boolean} [opts.tty]
  */
 async function configure(opts) {
@@ -31,7 +36,13 @@ async function configure(opts) {
     const stderr = fakeStream(opts.tty ?? true);
     const stdin = { isTTY: opts.tty ?? true };
     const asked = [];
+    // The custom-command prompts are recorded apart from `asked`, so the many tests that
+    // read `asked` as "the checkbox, then one select per new entry" keep meaning that.
+    const customAsked = [];
+    const rejected = [];
     const remaining = [...(opts.modes ?? [])];
+    const confirms = [...(opts.confirms ?? [])];
+    const inputs = [...(opts.inputs ?? [])];
 
     const prompts = {
         checkbox: async (config) => {
@@ -45,10 +56,27 @@ async function configure(opts) {
             if (opts.throwsOnSelect) throw opts.throwsOnSelect;
             return remaining.shift() ?? 'run';
         },
+        confirm: async (config) => {
+            customAsked.push(config.message);
+            if (opts.throwsOnConfirm) throw opts.throwsOnConfirm;
+            return confirms.shift() ?? false;
+        },
+        // Like the real prompt: a validate() that answers with a string rejects the line and
+        // asks again, so a scripted refusal is followed by the next scripted answer.
+        input: async (config) => {
+            for (;;) {
+                const answer = inputs.shift();
+                assert.notEqual(answer, undefined, `no scripted answer left for "${config.message}"`);
+                customAsked.push(config.message);
+                const verdict = config.validate ? config.validate(answer) : true;
+                if (verdict === true) return answer;
+                rejected.push(verdict);
+            }
+        },
     };
 
     const code = await runConfigure({
-        configs: CONFIGS,
+        configs: opts.configs ?? CONFIGS,
         config: opts.config ?? emptyConfig(),
         presetName: 'default',
         projectRoot: opts.dir,
@@ -58,7 +86,7 @@ async function configure(opts) {
         stdout: /** @type {any} */ (stdout),
     });
 
-    return { code, asked, output: stdout.text() + stderr.text() };
+    return { code, asked, customAsked, rejected, output: stdout.text() + stderr.text() };
 }
 
 describe('runConfigure — the interactive screen', () => {
@@ -218,6 +246,8 @@ describe('runConfigure — configurations named after prototype members', () => 
                 prompts: {
                     checkbox: async () => ['__proto__', 'constructor'],
                     select: async () => 'debug',
+                    confirm: async () => false,
+                    input: async () => assert.fail('no custom command was asked for'),
                 },
                 stdin: /** @type {any} */ ({ isTTY: true }),
                 stdout: /** @type {any} */ (stdout),
@@ -248,6 +278,8 @@ describe('runConfigure — configurations named after prototype members', () => 
                 prompts: {
                     checkbox: async (c) => { seen.push(c.choices); return []; },
                     select: async () => 'run',
+                    confirm: async () => false,
+                    input: async () => assert.fail('no custom command was asked for'),
                 },
                 stdin: /** @type {any} */ ({ isTTY: true }),
                 stdout: /** @type {any} */ (stdout),
@@ -378,24 +410,188 @@ describe('runConfigure — refusals and cancellation', () => {
             await cleanup();
         }
     });
+});
 
-    test('exits 1 when the IDE reports no configurations at all', async () => {
+describe('runConfigure — custom commands', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+    const withSeed = () => ({ ...emptyConfig(), presets: { default: [seed] } });
+
+    test('asks whether to add one, and declining changes nothing', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const stdout = fakeStream(true);
-            const code = await runConfigure({
-                configs: [],
-                config: emptyConfig(),
-                presetName: 'default',
-                projectRoot: dir,
-                log: createLogger({ stdout, stderr: stdout, env: { NO_COLOR: '1' } }),
-                prompts: { checkbox: async () => assert.fail('must not prompt'), select: async () => 'run' },
-                stdin: /** @type {any} */ ({ isTTY: true }),
-                stdout: /** @type {any} */ (stdout),
+            const { code, customAsked, output } = await configure({ dir });
+            assert.equal(code, 0);
+            assert.deepEqual(customAsked, ['Add a custom command?']);
+            assert.match(output, /unchanged/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('saves a named command list after the configurations', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { code, customAsked, output } = await configure({
+                dir,
+                checked: ['web'],
+                modes: ['run'],
+                confirms: [true],
+                inputs: ['seed db', 'npm i', 'npm run seed', ''],
             });
 
-            assert.equal(code, 1);
-            assert.match(stdout.text(), /no run configurations/);
+            assert.equal(code, 0);
+            assert.deepEqual(customAsked, [
+                'Add a custom command?',
+                'Name (it titles the terminal tab)',
+                'Command',
+                'Command 2 (empty to finish)',
+                'Command 3 (empty to finish)',
+                'Add another custom command?',
+            ]);
+            assert.deepEqual((await readPresets(dir)).presets.default, [
+                { name: 'web', mode: 'run' },
+                { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] },
+            ]);
+            assert.match(output, /\+ seed db/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('can add several in one run', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            await configure({
+                dir,
+                confirms: [true, true],
+                inputs: ['a', 'echo a', '', 'b', 'echo b', ''],
+            });
+            const saved = (await readPresets(dir)).presets.default;
+            assert.deepEqual(saved.map((entry) => entry.name), ['a', 'b']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('an empty name and the name of a run configuration are refused and asked again', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { rejected } = await configure({
+                dir,
+                confirms: [true],
+                inputs: ['', 'web', 'seed db', 'npm i', ''],
+            });
+
+            assert.deepEqual(rejected, [
+                'a name is required',
+                '"web" is the name of a run configuration; pick a different name',
+            ]);
+            assert.equal((await readPresets(dir)).presets.default[0].name, 'seed db');
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('the first command is required; later ones end the list when left empty', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { rejected } = await configure({ dir, confirms: [true], inputs: ['seed', '', 'npm i', ''] });
+            assert.deepEqual(rejected, ['the first command is required']);
+            assert.deepEqual((await readPresets(dir)).presets.default[0].commands, ['npm i']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('surrounding spaces are trimmed from the name and from each command', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            await configure({ dir, confirms: [true], inputs: ['  seed db ', '  npm i  ', ''] });
+            assert.deepEqual((await readPresets(dir)).presets.default, [
+                { name: 'seed db', mode: 'terminal', commands: ['npm i'] },
+            ]);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a saved custom entry comes back checked in the same list', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { asked, output } = await configure({
+                dir,
+                config: withSeed(),
+                checked: [customChoiceValue('seed db')],
+            });
+
+            const custom = asked[0].choices.filter((c) => c.checked);
+            assert.deepEqual(custom.map((c) => c.name), ['⌘ seed db — npm i && npm run seed']);
+            assert.match(output, /unchanged/, 'an untouched custom entry is not rewritten');
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('unchecking it removes it, and is reported', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { output } = await configure({ dir, config: withSeed(), checked: [] });
+
+            assert.deepEqual((await readPresets(dir)).presets.default, []);
+            assert.match(output, /- seed db/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a name the preset already has is refused, even when it was just unchecked', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { rejected } = await configure({
+                dir,
+                config: withSeed(),
+                checked: [],
+                confirms: [true],
+                inputs: ['seed db', 'other', 'echo hi', ''],
+            });
+
+            assert.deepEqual(rejected, ['"seed db" is already a custom command in this preset']);
+            assert.deepEqual((await readPresets(dir)).presets.default.map((entry) => entry.name), ['other']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('Ctrl-C while answering cancels and saves nothing', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const err = new Error('User force closed the prompt');
+            err.name = 'ExitPromptError';
+
+            const { code, output } = await configure({ dir, checked: ['web'], modes: ['run'], throwsOnConfirm: err });
+
+            assert.equal(code, 130);
+            assert.match(output, /cancelled; nothing was saved/);
+            assert.deepEqual((await readPresets(dir)).presets, {});
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('an IDE with no run configurations skips the checkbox and still offers custom commands', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { code, asked, output } = await configure({
+                dir,
+                configs: [],
+                confirms: [true],
+                inputs: ['seed db', 'npm i', ''],
+            });
+
+            assert.equal(code, 0);
+            assert.equal(asked.filter((a) => a.type === 'checkbox').length, 0);
+            assert.match(output, /no run configurations/);
+            assert.equal((await readPresets(dir)).presets.default[0].name, 'seed db');
         } finally {
             await cleanup();
         }
