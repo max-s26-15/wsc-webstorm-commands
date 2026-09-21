@@ -331,6 +331,22 @@ describe('validateCustomName', () => {
         );
     });
 
+    test('refuses a name with a control character', () => {
+        for (const name of ['a\nb', 'a\u001b[2Jb', 'a\u0000b', 'a\u007fb', 'a\u0085b']) {
+            assert.equal(validateCustomName(name, opts), 'a name cannot contain control characters', JSON.stringify(name));
+        }
+    });
+
+    test('a tab is not a control character here', () => {
+        assert.equal(validateCustomName('seed\tdb', opts), null);
+    });
+
+    test('trims what it is given, so a trailing space is the same name', () => {
+        assert.equal(validateCustomName('seed db ', opts), '"seed db" is already a custom command in this preset');
+        assert.equal(validateCustomName(' web', opts), '"web" is the name of a run configuration; pick a different name');
+        assert.equal(validateCustomName('  lint all  ', opts), null);
+    });
+
     test('a prototype member is an ordinary name', () => {
         assert.equal(validateCustomName('constructor', opts), null);
         assert.equal(validateCustomName('__proto__', opts), null);

@@ -39,6 +39,9 @@ export function customCommandLines(plan) {
  * can put shell text in front of `wsc`. Running it silently would be the surprise; printing
  * the exact line, every time and not only under --dry-run, is the whole mitigation.
  *
+ * One `warn`, not `info`: a mitigation that `WSC_LOG_LEVEL=warn` switches off would leave the
+ * shell text running with nothing said. It is one call so the block cannot be split up.
+ *
  * @param {import('../resolve.js').PlanEntry[]} plan
  * @param {ReturnType<typeof import('../log.js').createLogger>} log
  */
@@ -46,6 +49,5 @@ export function announceCustomCommands(plan, log) {
     const lines = customCommandLines(plan);
     if (lines.length === 0) return;
 
-    log.info('custom commands from the preset:');
-    for (const line of lines) log.info(`  ${line}`);
+    log.warn(['custom commands from the preset:', ...lines.map((line) => `  ${line}`)].join('\n'));
 }

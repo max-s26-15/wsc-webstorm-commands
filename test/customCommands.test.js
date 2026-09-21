@@ -48,9 +48,24 @@ describe('announceCustomCommands', () => {
         assert.match(stderr.text(), /custom commands from the preset:\n {2}seed db: npm i && npm run seed\n/);
     });
 
+    test('is still emitted when the logger only lets warnings through, as one message', () => {
+        const stderr = fakeStream();
+        const log = createLogger({ stdout: fakeStream(), stderr, env: { NO_COLOR: '1', WSC_LOG_LEVEL: 'warn' } });
+        announceCustomCommands(plan, log);
+        assert.match(stderr.text(), /custom commands from the preset:\n {2}seed db: npm i && npm run seed\n/);
+        assert.equal(stderr.text().match(/warn: /g)?.length, 1, 'one warn call, not one per line');
+    });
+
     test('says nothing for a plan without custom entries', () => {
         const stderr = fakeStream();
         announceCustomCommands(buildLaunchPlan({ configs: [{ name: 'web' }], preset: [{ name: 'web', mode: 'run' }] }), logTo(stderr));
+        assert.equal(stderr.text(), '');
+    });
+
+    test('says nothing without custom entries even at warn level', () => {
+        const stderr = fakeStream();
+        const log = createLogger({ stdout: fakeStream(), stderr, env: { NO_COLOR: '1', WSC_LOG_LEVEL: 'warn' } });
+        announceCustomCommands(buildLaunchPlan({ configs: [{ name: 'web' }], preset: [{ name: 'web', mode: 'run' }] }), log);
         assert.equal(stderr.text(), '');
     });
 });

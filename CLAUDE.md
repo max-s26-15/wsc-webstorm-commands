@@ -217,9 +217,14 @@ exercises it.
   the "stop at the first failure" decision. A custom call reads no `.idea/`, gets no inspector port, never
   goes through `commandFor`, and `needsTerminalCommands()` ignores it; it is a Terminal call like the others,
   so it gets the same named session (`tabName = entry.name`). `announceCustomCommands()` prints each
-  `name: command` line on **every** launch, not only `--dry-run`: `webstorm-commands.json` sits in `.idea/`
+  `name: command` line on **every** launch, not only `--dry-run`, as *one* `log.warn` call (header and lines
+  joined with newlines) so `WSC_LOG_LEVEL=warn` cannot switch off the only statement of what shell text is
+  about to run: `webstorm-commands.json` sits in `.idea/`
   and is usually committed, so a cloned repository would otherwise run shell text the first time `wsc` is
-  typed. The no-IDE path needs no catalogue for a preset made only of custom entries (the "WebStorm has
+  typed. For the same reason the entry's `name` and every command are refused at parse time (and the
+  name in `--configure`) if they hold a control character — `CONTROL_CHARACTERS` in `store.js`: C0 except
+  tab, DEL, C1 — since both are printed raw and a newline could forge plan lines while an escape sequence
+  could clear the announcement off the screen. The no-IDE path needs no catalogue for a preset made only of custom entries (the "WebStorm has
   saved no run configurations" error is raised only when a positional or a non-custom preset entry needs a catalogue),
   and `buildTabs()` never reads `entry.config` for them. In `--configure` the checkbox value of a custom
   entry is `customChoiceValue(name)`, distinct from a configuration name, because a hand-edited file can

@@ -8,7 +8,7 @@
 
 import { customCommandLine } from '../exec/customCommands.js';
 import { DEFAULT_MODE } from '../modes.js';
-import { isCustomEntry } from '../presets/store.js';
+import { CONTROL_CHARACTERS, isCustomEntry } from '../presets/store.js';
 
 // Mode assigned to a configuration the user checked but was never asked about.
 export { DEFAULT_MODE };
@@ -155,6 +155,9 @@ function answered(modes, name) {
  * @returns {{ added: string[], removed: string[], changed: string[], unchanged: boolean }}
  */
 export function diffPreset(before, after) {
+    // Compares kind, name and mode only, never `commands`: no path through `--configure` can
+    // change the commands of an existing custom entry (editing is out of scope, and re-adding
+    // a name is refused). If entry editing is ever added, this has to learn to compare them.
     const beforeModes = new Map(before.map((entry) => [entryKey(entry), entry.mode]));
     const afterModes = new Map(after.map((entry) => [entryKey(entry), entry.mode]));
 
@@ -179,12 +182,14 @@ export function diffPreset(before, after) {
  * since — including one just unchecked: re-adding it in the same run would look, to the
  * diff, like nothing changed and the new commands would never be saved.
  *
- * @param {string} name - already trimmed
+ * @param {string} rawName - trimmed here; the caller may pass the line as typed
  * @param {{ taken?: string[], ideNames?: string[] }} [opts]
  * @returns {string | null}
  */
-export function validateCustomName(name, { taken = [], ideNames = [] } = {}) {
-    if (name.trim() === '') return 'a name is required';
+export function validateCustomName(rawName, { taken = [], ideNames = [] } = {}) {
+    const name = rawName.trim();
+    if (name === '') return 'a name is required';
+    if (CONTROL_CHARACTERS.test(name)) return 'a name cannot contain control characters';
     if (taken.includes(name)) return `"${name}" is already a custom command in this preset`;
     if (ideNames.includes(name)) return `"${name}" is the name of a run configuration; pick a different name`;
     return null;

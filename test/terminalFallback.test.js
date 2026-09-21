@@ -47,6 +47,8 @@ const run = async (opts = {}) => {
     const stderr = fakeStream();
     const opened = [];
     const pooled = [];
+    // What stderr held when the tabs were opened: the announcement has to come first.
+    const seenAtOpen = { tabs: '', pool: '' };
 
     const adapter = { id: 'gnome-terminal', opens: 'tab' };
     const code = await runTerminalFallback({
@@ -60,12 +62,12 @@ const run = async (opts = {}) => {
         log: createLogger({ stdout, stderr, env: { NO_COLOR: '1' } }),
         readConfigs: async () => opts.configs ?? CONFIGS,
         findTerminal: async () => (opts.terminal === false ? null : { adapter, bin: {} }),
-        openTabs: async (tabs, tabOpts) => { opened.push({ tabs, opts: tabOpts }); },
-        runPool: async (tabs) => { pooled.push(tabs); return 0; },
+        openTabs: async (tabs, tabOpts) => { seenAtOpen.tabs = stderr.text(); opened.push({ tabs, opts: tabOpts }); },
+        runPool: async (tabs) => { seenAtOpen.pool = stderr.text(); pooled.push(tabs); return 0; },
         findBusyPorts: async () => [],
     });
 
-    return { code, opened, pooled, out: stdout.text(), err: stderr.text(), all: stdout.text() + stderr.text() };
+    return { code, opened, pooled, seenAtOpen, out: stdout.text(), err: stderr.text(), all: stdout.text() + stderr.text() };
 };
 
 describe('runTerminalFallback — what it can launch', () => {
@@ -318,8 +320,14 @@ describe('runTerminalFallback — custom command entries', () => {
     });
 
     test('the commands are announced before the tabs open', async () => {
-        const { err } = await run({ presetEntries: [seed] });
+        const { err, seenAtOpen } = await run({ presetEntries: [seed] });
         assert.match(err, /custom commands from the preset:\n {2}seed db: npm i && npm run seed\n/);
+        assert.match(seenAtOpen.tabs, /custom commands from the preset:/, 'already printed when the tabs opened');
+    });
+
+    test('the commands are announced before the single-window pool starts too', async () => {
+        const { seenAtOpen } = await run({ presetEntries: [seed], terminal: false });
+        assert.match(seenAtOpen.pool, /custom commands from the preset:/);
     });
 
     test('--dry-run prints the command and opens nothing', async () => {

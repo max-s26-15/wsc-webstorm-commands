@@ -238,7 +238,8 @@ test:coverage  run    (preset)
 Drop `--dry-run` and the two Run tabs really open, in that order. `wsc -c` is the
 interactive screen that writes the file: a checkbox list of everything the IDE reports, with
 the current preset pre-checked, followed by a run/debug/terminal question for each newly checked
-entry only.
+entry only, and a last step for adding a command of your own (see
+[Your own commands](#your-own-commands-no-run-configuration)).
 
 ## `--preset <name>`
 
@@ -350,7 +351,7 @@ entry shows in the checkbox as `⌘ seed db — npm i && npm run seed`, and unch
 name cannot be the name of a run configuration, or of another custom command in the same preset.
 
 The commands are always printed on stderr before anything starts, under `custom commands from the
-preset:`. The preset file lives in `.idea/` and is usually committed, so a repository you have just
+preset:` — as a warning, so that even `WSC_LOG_LEVEL=warn` leaves them visible. The preset file lives in `.idea/` and is usually committed, so a repository you have just
 cloned could otherwise run shell text the first time you type `wsc`; this way you see what is about
 to start. Without the IDE (`--fallback=terminal`) the same entry is a tab of the OS terminal, with the
 same title:
@@ -361,7 +362,7 @@ warn: WebStorm is not answering — launching without IDE tabs
 would launch 2 configuration(s) without the IDE:
 test     run       (preset)
 seed db  terminal  (preset)
-custom commands from the preset:
+warn: custom commands from the preset:
   seed db: npm i && npm run seed
 → test     PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test
 → seed db  npm i && npm run seed
@@ -378,7 +379,8 @@ Limits worth knowing:
 - Each command is shell text joined with a literal ` && `, so a command that ends in a shell comment
   (`# …`) or a trailing backslash also swallows the next one.
 - A preset made only of custom commands also works without the IDE when WebStorm has saved no run
-  configurations to `.idea/`, since it needs no catalogue.
+  configurations to `.idea/` and you name no configurations on the command line, since it then needs
+  no catalogue.
 - A `wsc` built before this feature does not know such an entry and stops with an error rather than
   running anything: it reads the entry as a run configuration called `seed db` (`unknown run
   configuration`), or, if it is older than `:terminal` too, refuses the file by name.

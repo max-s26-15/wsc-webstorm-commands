@@ -61,10 +61,22 @@ export class PresetConfigError extends Error {
 }
 
 /**
+ * Control characters: C0 except TAB, DEL, and C1. A custom entry's name and commands are
+ * printed straight to the terminal (the plan, the announcement), so a newline could forge
+ * lines of that output and an escape sequence could clear it; a tab is harmless and shell
+ * text has a use for it. Newline and carriage return are in the set, which is what keeps
+ * every command on one line.
+ */
+export const CONTROL_CHARACTERS = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/;
+
+/**
  * An entry that runs shell commands of its own instead of naming a run configuration.
  *
- * The one place that decides it: everything downstream (resolving, the launch plan, the
- * `--configure` screen) asks this instead of looking for `commands` itself.
+ * The parser and the `--configure` screen (checkbox, save) ask this. Downstream of the
+ * parser the entry has already been told apart by a cheaper test of the same fact: the
+ * launch plan branches on `commands !== undefined` in `buildLaunchPlan()` and every later
+ * stage on `isCustomPlanEntry()` (`'commands' in entry`) in `resolve.js`, because by then an
+ * entry either carries a validated `commands` array or has no such key at all.
  *
  * @param {PresetEntry} entry
  * @returns {entry is PresetEntry & { commands: string[] }}
@@ -283,15 +295,21 @@ function parseCustomEntry(name, mode, commands, extra, where, filePath) {
         );
     }
 
+    // Unlike an ordinary entry's name, nothing checks this one against the IDE's catalogue,
+    // and it is printed as it stands.
+    if (CONTROL_CHARACTERS.test(name)) {
+        throw new PresetConfigError(filePath, `${where} "name" must not contain control characters`);
+    }
+
     // One line each: the list is joined with `&&` into a single command line, and a newline
     // inside an item would start a second command that `&&` no longer guards.
     const valid = Array.isArray(commands)
         && commands.length > 0
-        && commands.every((command) => typeof command === 'string' && command.trim() !== '' && !/[\r\n]/.test(command));
+        && commands.every((command) => typeof command === 'string' && command.trim() !== '' && !CONTROL_CHARACTERS.test(command));
     if (!valid) {
         throw new PresetConfigError(
             filePath,
-            `${where} "commands" must be a non-empty list of non-empty single-line strings`,
+            `${where} "commands" must be a non-empty list of non-empty strings without control characters (a tab is fine)`,
         );
     }
 
