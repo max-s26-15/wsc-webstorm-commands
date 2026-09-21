@@ -6,6 +6,7 @@
  * verbatim — so the escaping, and the cut at the last word break, happen here, in
  * JavaScript, where they are unit-tested, instead of in the shell.
  */
+import { CONTROL_CHARACTERS } from '../presets/store.js';
 
 /** What an interactive bash starts with: `printf %q "$COMP_WORDBREAKS"`. */
 export const DEFAULT_WORDBREAKS = ' \t\n"\'><=;|&(:';
@@ -35,7 +36,8 @@ function bashItem(candidate, { partial, unescaped, quote }, wordBreaks) {
 
     // readline replaces only the text after the last word break the user typed *bare*; a
     // backslashed one is part of the word. A candidate always begins with the decoded
-    // partial word, so the same offset cuts it.
+    // partial word, so the same offset cuts it: that holds because candidates.js only ever
+    // offers strict prefix matches, and this cut is wrong for any source that does not.
     let cut = 0;
     for (let i = 0; i < partial.length; i += 1) {
         if (unescaped[i] && wordBreaks.includes(partial[i])) cut = i + 1;
@@ -53,8 +55,10 @@ function bashItem(candidate, { partial, unescaped, quote }, wordBreaks) {
  */
 export function formatCompletion(completion, shell, typed, wordBreaks = DEFAULT_WORDBREAKS) {
     // One candidate per line is the whole protocol; a name with a line break in it cannot be
-    // sent, and offering half of it would be worse than not offering it.
-    const safe = completion.values.filter((value) => !/[\r\n]/.test(value));
+    // sent, and offering half of it would be worse than not offering it. The same goes for
+    // any other control character (an ESC would reach the terminal raw in readline's listing):
+    // the definition is the preset store's, so a name it refuses is one this drops.
+    const safe = completion.values.filter((value) => !CONTROL_CHARACTERS.test(value));
     const items = shell === 'bash' ? safe.map((value) => bashItem(value, typed, wordBreaks)) : safe;
     return [completion.directive, ...items.filter((item) => item !== '')].join('\n') + '\n';
 }

@@ -19,6 +19,17 @@ describe('formatCompletion — zsh', () => {
     test('drops a candidate that would break the one-per-line protocol', () => {
         assert.equal(formatCompletion(values(['a\nb', 'c\rd', 'ok']), 'zsh', tokenize('wsc ')), 'values\nok\n');
     });
+
+    test('drops a candidate with any other control character, which a terminal would act on', () => {
+        const list = ['esc\u001b[2J', 'del\u007f', 'c1\u009b', 'nul\u0000', 'ok'];
+        assert.equal(formatCompletion(values(list), 'zsh', tokenize('wsc ')), 'values\nok\n');
+        assert.equal(formatCompletion(values(list), 'bash', tokenize('wsc ')), 'values\nok\n');
+    });
+
+    test('keeps a tab, which the preset store allows in a name, and bash escapes it', () => {
+        assert.equal(formatCompletion(values(['a\tb']), 'zsh', tokenize('wsc ')), 'values\na\tb\n');
+        assert.equal(formatCompletion(values(['a\tb']), 'bash', tokenize('wsc ')), 'values\na\\\tb\n');
+    });
 });
 
 describe('escapeForBash', () => {
