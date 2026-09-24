@@ -105,9 +105,11 @@ try {
         step(names.has(required), required);
     }
 
-    // Not required: it comes from the optional wsc IDE plugin (ide-plugin/), and is what would
-    // let `:debug` open a real Debug tab. A ✗ here only means the plugin is not installed.
+    // Not required: both come from the optional wsc IDE plugin (ide-plugin/). The first lets
+    // `:debug` open a real Debug tab, the second makes every Terminal tab a real terminal. A ✗
+    // here only means the plugin is not installed (or is an older build, for the second).
     step(names.has('debug_run_configuration'), 'debug_run_configuration (optional, from the wsc IDE plugin)');
+    step(names.has('open_terminal_tab'), 'open_terminal_tab (optional, from the wsc IDE plugin)');
 
     // ── 4. Run configurations ────────────────────────────────────────────────
     const payload = await client.callTool('get_run_configurations');

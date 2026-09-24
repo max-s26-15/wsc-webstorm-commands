@@ -10,10 +10,12 @@ working directory and environment. Nothing is re-implemented and nothing is gues
 It comes in two parts:
 
 - **`wsc`, a command-line tool** (Node.js). This is all you need to launch configurations.
-- **A small WebStorm plugin** (`ide-plugin/`, optional but recommended). It adds one tool to the
-  IDE's MCP Server so that `wsc name:debug` opens a **real Debug tab**. Without it, `:debug` falls
+- **A small WebStorm plugin** (`ide-plugin/`, optional but recommended). It adds two tools to the
+  IDE's MCP Server. One makes `wsc name:debug` open a **real Debug tab**; without it, `:debug` falls
   back to a Terminal tab with a bare Node inspector that you attach to by hand — see
-  [Debugging](#debugging-debug).
+  [Debugging](#debugging-debug). The other makes every Terminal tab `wsc` opens a **real terminal**;
+  without it, programs that draw their own screen show nothing there — see
+  [A Terminal tab for one entry](#a-terminal-tab-for-one-entry-terminal).
 
 Every block of output below is copied from a real run against this repository's own three npm
 run configurations (`test`, `test:coverage`, `test:watch`), with WebStorm 2026.2.3 running and the
@@ -109,7 +111,7 @@ follow the same pattern.
 The first build downloads Gradle and dependencies and takes a minute or two. It produces:
 
 ```
-ide-plugin/build/distributions/wsc-ide-plugin-0.3.0.zip
+ide-plugin/build/distributions/wsc-ide-plugin-0.4.0.zip
 ```
 
 (the version in the file name changes when the plugin does).
@@ -142,8 +144,10 @@ $ npm run mcp:probe -- /home/max-s26/max/new-projects/webstorm-commands
   test:watch     npm
 ```
 
-The line to look for is `✓ debug_run_configuration`. A `✗` there only means the plugin is not
-installed (or the IDE was not restarted) — `wsc` still works, `:debug` just takes the Terminal route.
+The lines to look for are `✓ debug_run_configuration` and `✓ open_terminal_tab` (the output above
+was captured with plugin 0.3.0, which only had the first). A `✗` there only means the plugin is not
+installed, is older than 0.4.0, or the IDE was not restarted — `wsc` still works: `:debug` takes the
+Terminal route, and Terminal tabs use the IDE's own terminal tool.
 
 ### Updating
 
@@ -360,8 +364,19 @@ Terminal too — as the same inspector-enabled command `:debug` uses without the
 (`NODE_OPTIONS=… --inspect-brk=…`, with an inspector port of its own), not as a Debug tab. `:terminal`
 is the one that has no debugger at all.
 
-Every Terminal tab — `:terminal`, `--target=terminal`, and `:debug` without the plugin — is a **new
-tab of its own, titled with the name of the configuration** it runs (`test:watch`, not `wsc`). The
+Every Terminal tab — `:terminal`, `--target=terminal`, `:debug` without the plugin's Debug tool,
+and [your own commands](#your-own-commands-no-run-configuration) — is a **new tab of its own, titled
+with the name of the configuration** it runs (`test:watch`, not `wsc`).
+
+**With the plugin (0.4.0 or newer)** it is a real terminal: the plugin's `open_terminal_tab` opens
+the same kind of tab the Terminal window's **+** button does, runs your shell in it in the project
+root, and types the command in, so colours, progress bars and full-screen programs (`ngrok`, `top`)
+work and Ctrl-C stops the process. The `--dry-run` lines then read `→ open_terminal_tab`.
+**Without the plugin** the tab comes from the IDE's own `execute_terminal_command`, which runs the
+command on pipes instead of a terminal — measured: `[ -t 1 ]` is false and `TERM` is empty inside
+it. The tab shows what the command prints, but a program that draws its own screen shows nothing
+(ngrok prints only its warnings), and Ctrl-C there cannot reach it. `wsc` says so once per run.
+On that route the
 IDE's MCP tool has no parameter for a tab title, but it titles a tab after the MCP client that opened
 it, so `wsc` opens one short-lived session per tab, called by the configuration's name. If such a
 session cannot be opened the launch still happens, and `wsc` warns — once — that the tabs are titled `wsc`.

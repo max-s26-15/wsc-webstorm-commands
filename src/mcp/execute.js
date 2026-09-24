@@ -20,8 +20,20 @@ export const RUN_CONFIGURATION_TOOL = 'execute_run_configuration';
  */
 export const DEBUG_CONFIGURATION_TOOL = 'debug_run_configuration';
 
-/** With reuseExistingTerminalWindow:false, one fresh Terminal tab per call. */
+/**
+ * With reuseExistingTerminalWindow:false, one fresh Terminal tab per call — but not a real
+ * terminal. Measured on WebStorm 2026.2.3: the command's stdin, stdout and stderr are pipes
+ * (`[ -t 1 ]` is false, `TERM` is empty), so a program that draws its own screen (ngrok, top,
+ * a progress bar) shows nothing, and Ctrl-C in the tab never reaches it. See TERMINAL_TAB_TOOL.
+ */
 export const TERMINAL_TOOL = 'execute_terminal_command';
+
+/**
+ * Opens a titled Terminal tab running the user's shell on a real terminal and types the
+ * command into it — the tab the "+" button gives. From the optional wsc IDE plugin
+ * (ide-plugin/), like DEBUG_CONFIGURATION_TOOL, so it is only used when the session lists it.
+ */
+export const TERMINAL_TAB_TOOL = 'open_terminal_tab';
 
 /**
  * How long a terminal launch is given before the CLI moves on.
@@ -86,6 +98,24 @@ export function debugConfigurationCall(configurationName) {
     return {
         tool: DEBUG_CONFIGURATION_TOOL,
         arguments: { configurationName },
+    };
+}
+
+/**
+ * Run a shell command in a real Terminal tab, through the wsc IDE plugin.
+ *
+ * The title is an argument here, so no session has to be opened under the tab's name (the
+ * trick TERMINAL_TOOL needs), and there are no bounds to send: the plugin answers as soon as
+ * the command has been typed in, never waiting for it to finish.
+ *
+ * @param {string} tabName
+ * @param {string} command
+ * @returns {ToolCall}
+ */
+export function terminalTabCall(tabName, command) {
+    return {
+        tool: TERMINAL_TAB_TOOL,
+        arguments: { tabName, command },
     };
 }
 

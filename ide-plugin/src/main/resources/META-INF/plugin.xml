@@ -2,19 +2,26 @@
     <id>dev.wsc.debug-tool</id>
     <name>wsc Debug Tool</name>
     <vendor>wsc</vendor>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
 
     <description><![CDATA[
-        Adds one tool to the IDE's built-in MCP Server: <code>debug_run_configuration</code>, which starts an
-        existing run configuration with the Debug executor, exactly like the Debug button does.
-        Used by the <code>wsc</code> command line tool so that <code>wsc name:debug</code> opens a real Debug tab
-        instead of a Terminal tab with a bare Node inspector.
+        Adds two tools to the IDE's built-in MCP Server, used by the <code>wsc</code> command line tool.
+        <ul>
+            <li><code>debug_run_configuration</code> starts an existing run configuration with the Debug executor,
+            exactly like the Debug button does, so that <code>wsc name:debug</code> opens a real Debug tab instead of a
+            Terminal tab with a bare Node inspector.</li>
+            <li><code>open_terminal_tab</code> opens a titled Terminal tab running the user's shell on a real terminal and
+            executes a command in it. The IDE's own <code>execute_terminal_command</code> runs commands on pipes, so
+            programs that draw their own screen show nothing there and Ctrl-C cannot reach them.</li>
+        </ul>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.mcpServer</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <mcpServer.mcpToolset implementation="dev.wsc.ide.WscDebugToolset"/>
+        <mcpServer.mcpToolset implementation="dev.wsc.ide.WscTerminalToolset"/>
     </extensions>
 </idea-plugin>

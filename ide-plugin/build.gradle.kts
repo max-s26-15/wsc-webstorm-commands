@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "dev.wsc"
-version = "0.3.0"
+version = "0.4.0"
 
 // Built against the WebStorm that is already installed, not a downloaded copy: the MCP Server
 // plugin this one extends is a bundled plugin whose API is only guaranteed for its own build.
@@ -20,6 +20,7 @@ dependencies {
     intellijPlatform {
         local(webstormPath)
         bundledPlugin("com.intellij.mcpServer")
+        bundledPlugin("org.jetbrains.plugins.terminal")
     }
 }
 

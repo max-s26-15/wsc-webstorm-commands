@@ -25,6 +25,9 @@ import {
     formatExecutionPlan,
     guessedCommands,
     needsTerminalCommands,
+    PIPED_TERMINAL_NOTE,
+    usesPipedTerminal,
+    usesTerminal,
 } from './exec/planBuilder.js';
 import { announceCustomCommands } from './exec/customCommands.js';
 import { guessedCommandNote, ideaCommandResolver } from './exec/ideaCommands.js';
@@ -35,7 +38,7 @@ import { LIST_WITHOUT_IDE_LABEL, listFromDisk, listFromIde } from './list.js';
 import { createLogger } from './log.js';
 import { connectMcp } from './mcp/client.js';
 import { discoverPort, parsePort } from './mcp/discovery.js';
-import { DEBUG_CONFIGURATION_TOOL, runExecutionPlan } from './mcp/execute.js';
+import { DEBUG_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL, runExecutionPlan } from './mcp/execute.js';
 import {
     CONFIG_DIR,
     PresetConfigError,
@@ -258,22 +261,21 @@ function resolveDebugPort(value) {
 }
 
 /**
- * Whether the IDE offers `debug_run_configuration`, the wsc plugin's tool.
+ * The names of the tools the IDE offers — how the wsc plugin's tools are found.
  *
- * A failure to list tools is "no", not an error: the plugin is optional, and the terminal
- * route it replaces still works, so a session that cannot answer must not stop a launch.
+ * A failure to list them is "none", not an error: the plugin is optional, and the routes its
+ * tools replace still work, so a session that cannot answer must not stop a launch.
  *
  * @param {import('./mcp/client.js').McpClient} client
  * @param {ReturnType<typeof createLogger>} log
- * @returns {Promise<boolean>}
+ * @returns {Promise<Set<string>>}
  */
-async function hasDebugTool(client, log) {
+async function ideToolNames(client, log) {
     try {
-        const tools = await client.listTools();
-        return tools.some((tool) => tool.name === DEBUG_CONFIGURATION_TOOL);
+        return new Set((await client.listTools()).map((tool) => tool.name));
     } catch (err) {
-        log.debug(`could not list the IDE's tools (${/** @type {Error} */ (err).message}); assuming no debug tool`);
-        return false;
+        log.debug(`could not list the IDE's tools (${/** @type {Error} */ (err).message}); assuming no wsc plugin`);
+        return new Set();
     }
 }
 
@@ -714,9 +716,15 @@ async function run(argv, deps) {
             );
         }
 
-        // The IDE can debug a configuration itself only with the wsc plugin's tool, so ask
-        // rather than assume. Only worth a round trip when the plan has a :debug entry.
-        const debugTool = plan.some((entry) => entry.mode === 'debug') && (await hasDebugTool(client, log));
+        // The wsc plugin's two tools replace the IDE's own for what would otherwise go through its
+        // piped terminal: debug_run_configuration for :debug, open_terminal_tab for every Terminal
+        // tab. Ask rather than assume — and only when the plan has an entry that would end up in
+        // the terminal without them, so a plain run-window launch pays no round trip.
+        const tools = plan.some((entry) => usesTerminal(entry, target))
+            ? await ideToolNames(client, log)
+            : new Set();
+        const debugTool = plan.some((entry) => entry.mode === 'debug') && tools.has(DEBUG_CONFIGURATION_TOOL);
+        const terminalTool = tools.has(TERMINAL_TAB_TOOL);
 
         // A command line — for --target=terminal, and for every :debug without the plugin's
         // tool, which then has nowhere else to go — is rebuilt from what WebStorm saved to
@@ -733,7 +741,7 @@ async function run(argv, deps) {
 
         // Built here rather than inside the seam so that it is validated on the --dry-run
         // path too, and so an unlaunchable entry is reported before the first tab opens.
-        const calls = buildExecutionPlan({ plan, target, debugPortBase, debugTool, commandFor });
+        const calls = buildExecutionPlan({ plan, target, debugPortBase, debugTool, terminalTool, commandFor });
 
         // One port per debug entry counts upwards, so a high --debug-port can run out of
         // range. Reported as the usage error it is, before anything starts.
@@ -760,6 +768,8 @@ async function run(argv, deps) {
         for (const note of notes) log.warn(note);
         // A note here means :debug was rerouted to the terminal; the plugin is the way out.
         if (notes.length > 0) log.warn(DEBUG_PLUGIN_HINT);
+        // Before the launch, once: a tab that opens and then shows nothing reads as a broken command.
+        if (usesPipedTerminal(calls)) log.warn(PIPED_TERMINAL_NOTE);
 
         // Said before the launch, like every other note: a guessed command line is the one
         // thing on this path that can open a tab which dies immediately.

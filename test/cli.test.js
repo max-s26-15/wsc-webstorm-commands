@@ -1458,3 +1458,100 @@ describe('runCli — :debug through the wsc IDE plugin', () => {
         assert.deepEqual(launched(tools), ['execute_run_configuration', TOOL]);
     });
 });
+
+describe('runCli — a real Terminal tab through the wsc IDE plugin', () => {
+    const TAB_TOOL = 'open_terminal_tab';
+    const PIPED = /not a real terminal/;
+
+    /**
+     * Runs the real execution seam in a project whose preset holds one custom command.
+     *
+     * @param {string[]} argv
+     * @param {object} [opts] - passed to fakeCliDeps (tools, …)
+     * @param {(client: any) => any} [wrap]
+     */
+    const launch = async (argv, opts = {}, wrap = (client) => client) => {
+        const preset = { presets: { default: [{ name: 'ngrok', commands: ['ngrok http 8000'] }] } };
+        const { dir, cleanup } = await tmpProject(JSON.stringify(preset));
+        try {
+            const h = fakeCliDeps({ cwd: dir, ...opts });
+            delete h.deps.executePlan; // exercise the real seam
+            const connect = h.deps.connectMcp;
+            h.deps.connectMcp = async (...args) => wrap(await connect(...args));
+            const code = await runCli(argv, h.deps);
+            const calls = h.calls.filter((c) => c.type === 'call' && c.name !== 'get_run_configurations');
+            const named = h.calls.filter((c) => c.type === 'connect' && c.clientName !== undefined);
+            return { code, output: h.output(), stdout: h.stdout(), calls, named };
+        } finally {
+            await cleanup();
+        }
+    };
+
+    test('with the plugin, the custom command runs in a real shell tab the plugin titles', async () => {
+        const { code, output, calls, named } = await launch([], { tools: [TAB_TOOL] });
+
+        assert.equal(code, 0);
+        assert.deepEqual(calls.map((c) => [c.name, c.args]), [[TAB_TOOL, { tabName: 'ngrok', command: 'ngrok http 8000' }]]);
+        assert.deepEqual(named, [], 'no session has to be opened under the tab\'s name');
+        assert.doesNotMatch(output, PIPED);
+        assert.match(output, /started ngrok \(terminal\)/);
+    });
+
+    test(':terminal and --target=terminal use it too', async () => {
+        const { calls } = await launch(['web:terminal'], { tools: [TAB_TOOL] });
+        assert.deepEqual(calls.map((c) => c.name), [TAB_TOOL, TAB_TOOL]);
+        assert.deepEqual(calls.map((c) => c.args.tabName), ['ngrok', 'web']);
+    });
+
+    test('without the plugin, the IDE\'s own tool is used and the run says, once, what that costs', async () => {
+        const { code, output, calls } = await launch(['web:terminal'], { tools: [] });
+
+        assert.equal(code, 0);
+        assert.deepEqual(calls.map((c) => c.name), ['execute_terminal_command', 'execute_terminal_command']);
+        assert.equal(output.match(new RegExp(PIPED, 'g'))?.length, 1);
+        assert.match(output, /wsc IDE plugin/);
+    });
+
+    test('a failed tool listing means "no plugin", not a failed launch', async () => {
+        const { code, output, calls } = await launch([], { tools: [TAB_TOOL] }, (client) => ({
+            ...client,
+            listTools: async () => { throw new Error('boom'); },
+        }));
+        assert.equal(code, 0);
+        assert.deepEqual(calls.map((c) => c.name), ['execute_terminal_command']);
+        assert.match(output, PIPED);
+    });
+
+    test('a plan with no terminal tab neither asks for the tools nor warns', async () => {
+        // No preset here: `wsc web` is a single Run-window entry.
+        const { dir, cleanup } = await tmpProject();
+        try {
+            let asked = 0;
+            const h = fakeCliDeps({ cwd: dir, tools: [TAB_TOOL] });
+            delete h.deps.executePlan;
+            const connect = h.deps.connectMcp;
+            h.deps.connectMcp = async (...args) => {
+                const client = await connect(...args);
+                return { ...client, listTools: async () => (asked++, client.listTools()) };
+            };
+
+            assert.equal(await runCli(['web'], h.deps), 0);
+            assert.equal(asked, 0);
+            assert.doesNotMatch(h.output(), PIPED);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('--dry-run shows the plugin\'s call and opens nothing', async () => {
+        const { code, stdout, calls } = await launch(['--dry-run'], { tools: [TAB_TOOL] });
+        assert.equal(code, 0);
+        assert.match(stdout, /→ open_terminal_tab +ngrok http 8000/);
+        assert.deepEqual(calls, []);
+    });
+
+    test('with both plugin tools, :debug still gets the real Debug tab', async () => {
+        const { calls } = await launch(['api:debug'], { tools: [TAB_TOOL, 'debug_run_configuration'] });
+        assert.deepEqual(calls.map((c) => c.name), [TAB_TOOL, 'debug_run_configuration']);
+    });
+});
