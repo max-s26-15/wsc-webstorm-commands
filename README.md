@@ -127,27 +127,29 @@ ide-plugin/build/distributions/wsc-ide-plugin-0.4.0.zip
 Run the probe against a project that is open in WebStorm (it needs the project's path):
 
 ```
-$ npm run mcp:probe -- /home/max-s26/max/new-projects/webstorm-commands
+$ npm run mcp:probe -- /home/max-s26/max/new-projects/wsc-webstorm-commands
 > webstorm-commands@1.0.0 mcp:probe
-> node scripts/mcp-probe.js /home/max-s26/max/new-projects/webstorm-commands
+> node scripts/mcp-probe.js /home/max-s26/max/new-projects/wsc-webstorm-commands
 
 ✓ MCP Server on port 64542
-✓ handshake complete (project: /home/max-s26/max/new-projects/webstorm-commands)
-✓ 44 tools available
+✓ handshake complete (project: /home/max-s26/max/new-projects/wsc-webstorm-commands)
+✓ 45 tools available
 ✓ get_run_configurations
 ✓ execute_run_configuration
 ✓ execute_terminal_command
 ✓ debug_run_configuration (optional, from the wsc IDE plugin)
-✓ 3 run configurations
+✓ open_terminal_tab (optional, from the wsc IDE plugin)
+✓ 5 run configurations
+  mcp:probe      npm
   test           npm
   test:coverage  npm
   test:watch     npm
+  typecheck      npm
 ```
 
-The lines to look for are `✓ debug_run_configuration` and `✓ open_terminal_tab` (the output above
-was captured with plugin 0.3.0, which only had the first). A `✗` there only means the plugin is not
-installed, is older than 0.4.0, or the IDE was not restarted — `wsc` still works: `:debug` takes the
-Terminal route, and Terminal tabs use the IDE's own terminal tool.
+The lines to look for are `✓ debug_run_configuration` and `✓ open_terminal_tab`. A `✗` there only
+means the plugin is not installed, is older than 0.4.0, or the IDE was not restarted — `wsc` still
+works: `:debug` takes the Terminal route, and Terminal tabs use the IDE's own terminal tool.
 
 ### Updating
 
@@ -335,9 +337,9 @@ would launch 3 configuration(s) via terminal:
 test           run    (preset)
 test:coverage  debug  (cli)
 test:watch     debug  (cli)
-→ execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test
-→ execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--inspect-brk=127.0.0.1:9400" npm run test:coverage
-→ execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--inspect-brk=127.0.0.1:9401" npm run test:watch
+→ open_terminal_tab  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test
+→ open_terminal_tab  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--inspect-brk=127.0.0.1:9400" npm run test:coverage
+→ open_terminal_tab  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--inspect-brk=127.0.0.1:9401" npm run test:watch
 ```
 
 ## A Terminal tab for one entry (`:terminal`)
@@ -424,7 +426,7 @@ warn: custom commands from the preset:
 → seed db  npm i && npm run seed
 ```
 
-On the IDE path the same entry is one more `→ execute_terminal_command  npm i && npm run seed` line in
+On the IDE path the same entry is one more `→ open_terminal_tab  npm i && npm run seed` line (`→ execute_terminal_command` without the plugin) in
 the `--dry-run` output, in a tab of its own.
 
 Limits worth knowing:
@@ -452,9 +454,9 @@ would launch 3 configuration(s) via terminal:
 test           run    (preset)
 test:coverage  run    (preset)
 test:watch     run    (cli)
-→ execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test
-→ execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test:coverage
-→ execute_terminal_command  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test:watch
+→ open_terminal_tab  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test
+→ open_terminal_tab  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test:coverage
+→ open_terminal_tab  PATH=/home/max-s26/.nvm/versions/node/v20.20.0/bin:"$PATH" npm run test:watch
 ```
 
 The command line is not guessed from the configuration's name: it is read out of the
