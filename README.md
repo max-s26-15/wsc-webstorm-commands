@@ -147,9 +147,9 @@ $ npm run mcp:probe -- /home/max-s26/max/new-projects/wsc-webstorm-commands
   typecheck      npm
 ```
 
-The lines to look for are `✓ debug_run_configuration` and `✓ open_terminal_tab`. A `✗` there only means the plugin is not
-installed, is older than 0.4.0, or the IDE was not restarted — `wsc` still works: `:debug` takes the
-Terminal route, and Terminal tabs use the IDE's own terminal tool.
+The lines to look for are `✓ debug_run_configuration` and `✓ open_terminal_tab`. A `✗` there only
+means the plugin is not installed, is older than 0.4.0, or the IDE was not restarted — `wsc` still
+works: `:debug` takes the Terminal route, and Terminal tabs use the IDE's own terminal tool.
 
 ### Updating
 
