@@ -50,11 +50,15 @@ Repo hygiene: `.claude/.claude/` is an accidental nested copy of `.claude/` (unt
 do not edit it or commit it. `ide-plugin/` is Kotlin/Gradle and has its own `README.md`; nothing in `npm test`
 exercises it.
 
-- `bin/wsc.js` — shebang entrypoint. Calls `runCli(process.argv.slice(2))` and does `process.exit(code)`.
-  No logic lives here; keep it that way so `src/cli.js` stays unit-testable without spawning a process.
+- `bin/wsc.js` — shebang entrypoint. Calls `runCli(process.argv.slice(2))` and does `process.exit(code)` — except that
+  `argv[0] === '__complete'` goes to `src/completion/run.js` instead, each imported only on its own branch (see the
+  completion paragraph below).
+  No logic lives here beyond that one branch (which also swallows a failed load of `run.js`, so Tab stays silent);
+  keep it that way so `src/cli.js` stays unit-testable without spawning a process. It has no static import at all,
+  and `test/completionBoundary.test.js` pins that.
 - `src/cli.js` — argument parsing (`node:util.parseArgs`) and the `runCli(argv): Promise<number>` contract
-  every flag plugs into. Three intents live in it, and each one refuses the other two's flags rather than
-  half-honouring a command line: a launch, `--configure`, and `--list`.
+  every flag plugs into. Four intents live in it, and each one refuses the others' flags rather than
+  half-honouring a command line: a launch, `--configure`, `--list`, and `--completion`.
 - `src/log.js` — `createLogger()`: leveled logging (`WSC_LOG_LEVEL`), `NO_COLOR`/`FORCE_COLOR`/`TERM=dumb`
   aware. Diagnostics go to stderr, `out()` is the only thing that writes to stdout, so `wsc --list` (and a
   `--dry-run` plan) stays pipeable. `color` is decided from **stderr**'s TTY-ness, not stdout's.
@@ -523,6 +527,28 @@ exercises it.
   re-run") is the right answer only when the IDE is unreachable, and would name the one thing already true
   when it is answering. `terminalEscapeHint(mode)` in `planBuilder.js` is the single source of the other
   two lines, shared with `UnsupportedLaunchError`.
+- **`src/completion/` — Tab completion (zsh, bash), and why it has its own entry point.** The shell wrapper
+  (`wsc --completion <shell>` prints it) hands the line up to the cursor to `wsc __complete <shell> <line>`;
+  `bin/wsc.js` routes that to `src/completion/run.js` **without loading `src/cli.js`**, because `cli.js`
+  statically imports `@inquirer/prompts` and `wsc --version` costs 0.21 s against 0.05 s for bare `node` —
+  a cost paid on every keypress. Pinned by `test/completionBoundary.test.js`, which walks the *static* import
+  graph from `run.js` and forbids `cli.js`, `src/ui/` and any package (`src/mcp/` is allowed: its SDK import
+  is dynamic). That is why `FALLBACK_MODES` moved into `src/modes.js`. Names come from `.idea/`
+  (`readIdeaRunConfigs`), **never MCP**: a Tab cannot wait for a connection, and a configuration the IDE has
+  not saved yet is simply absent. Answer protocol: first line `values` | `dirs` | `none`, then one candidate
+  per line. **Escaping is done in JS (`format.js`), not in the shell**: zsh gets raw names and `compadd`
+  quotes them; bash gets ready `COMPREPLY` items, cut after the last *bare* `COMP_WORDBREAKS` character
+  (`:`, `=`, `>` are word breaks in bash, and `api > repro:stale-job:debug` has all of them) and
+  backslash-escaped. The wrapper passes the raw line, not `COMP_WORDS`, for the same reason. The tokenizer ends a
+  command at a bare `;`, `|` or `&` (so `&&` and `||` too), so an earlier command in a list cannot leak its
+  flags or its `--project` into this one. `compopt -o filenames` is used for the `dirs` directive **only**, never
+  for names: readline appends `/` to a candidate that matches a directory in the working directory, and demo-app
+  has both a configuration and a directory called `web`. A leading `~` in `--project` is expanded with
+  `os.homedir()` (the shell has not expanded it yet); `~user` is not. A candidate containing a control character
+  (`CONTROL_CHARACTERS`, the preset store's own definition) is dropped, not escaped. Every failure means
+  "offer less": exit 0, empty stderr, `WSC_COMPLETE_DEBUG=1` prints why. `__complete` is a reserved word only
+  as `argv[0]`. The zsh wrapper is tested with stubbed `compadd`/`_files`/`_wsc_line` (BUFFER and CURSOR
+  exist only inside ZLE); the real Tab is checked by hand through a pty.
 - `scripts/mcp-probe.js` — manual diagnostic script, deliberately **not** part of the CLI. Walks
   discover → connect → list tools → `get_run_configurations` against a real, running WebStorm instance and
   reports each step separately. Keep this working across IDE upgrades; it's the fastest way to see what a

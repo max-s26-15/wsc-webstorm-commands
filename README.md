@@ -163,6 +163,46 @@ a new IDE build can need a fresh build of it. The plugin declares `since-build 2
 
 `npm unlink -g webstorm-commands` removes the command; **Settings → Plugins** removes the plugin.
 
+## Tab completion
+
+Add `source <(wsc --completion zsh)` to `~/.zshrc`, or `source <(wsc --completion bash)` to `~/.bashrc`;
+`wsc` has to be on your `PATH` (`npm link`).
+
+- `source <(wsc --completion zsh)` costs about 0.2 s in every new shell. Save the script once
+  (`wsc --completion zsh > ~/.wsc-completion.zsh`) and `source` that file instead.
+- bash 4 or newer is recommended. bash 3.2 (the macOS default) cannot `source <(…)`; use
+  `source /dev/stdin <<<"$(wsc --completion bash)"`. It also has no `compopt`, so `--project`
+  completes directories without escaping them.
+
+```
+$ wsc --completion zsh | head -8
+#compdef wsc
+# Tab completion for wsc. Add this to ~/.zshrc:
+#   source <(wsc --completion zsh)
+
+# The one place that reads ZLE's BUFFER and CURSOR, kept apart so the tests can replace it.
+_wsc_line() { REPLY=${BUFFER[1,CURSOR]} }
+
+_wsc() {
+```
+
+Names come from `.idea/`, never from the IDE, so a configuration you just created appears once WebStorm
+has written it out. What the shell asks `wsc` for on Tab (the first line is the kind of answer, the rest
+are the candidates):
+
+```
+$ wsc __complete zsh 'wsc --ta'
+values
+--target
+$ wsc __complete zsh 'wsc api:'
+values
+api:run
+api:debug
+api:terminal
+```
+
+`WSC_COMPLETE_DEBUG=1` prints why a Tab offered less. `__complete` is reserved as the first argument.
+
 ## The flag table
 
 | flag | what it does |
@@ -176,6 +216,7 @@ a new IDE build can need a fresh build of it. The plugin declares `since-build 2
 | `--target=run-window\|terminal` | native Run/Debug tabs (default) or IDE Terminal tabs |
 | `--dry-run` | print the exact calls without launching anything |
 | `--fallback=retry\|terminal` | answer the "WebStorm is not answering" prompt in advance |
+| `--completion <zsh\|bash>` | print a Tab-completion script for that shell (see [Tab completion](#tab-completion)) |
 | `--project <path>` | project root (default: the nearest directory with `.idea/`) |
 | `--mcp-port <n>` | MCP Server port (default: `WSC_MCP_PORT`, then a scan) |
 | `--debug-port <n>` | first inspector port for Terminal-route `:debug` entries (default: 9229) |
