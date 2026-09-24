@@ -320,7 +320,8 @@ test:watch     debug  (cli)
 `debug_run_configuration`. The IDE starts the configuration with its Debug executor, exactly as
 its Debug button does: a real **Debug tab** opens and the IDE's own debugger attaches. Because it is
 the IDE debugging, it also follows the child processes an npm script starts (`npm test`,
-`npm run dev` → gulp / nodemon). No inspector port is involved.
+`npm run dev` → gulp / nodemon). No inspector port is involved. Since plugin 0.5.0 the session
+starts with **breakpoints muted**: press *Mute Breakpoints* in the Debug tab to let it stop.
 
 **Without the plugin**, the IDE's MCP API has no debug parameter, so `wsc` says so, opens a
 **Terminal** tab instead, and rebuilds the command with `--inspect-brk`. It warns before it

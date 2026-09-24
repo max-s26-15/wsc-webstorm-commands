@@ -10,6 +10,14 @@ The tool starts the configuration with the Debug executor on the EDT and waits (
 confirm that the Debug tab exists; it answers `started a debug session for "<name>" (tab: …)`, or fails with an
 error when the IDE never confirms.
 
+Since 0.5.0 every session it starts comes up with **breakpoints muted** — the Debug tab's *Mute Breakpoints*
+button is already pressed, and pressing it again turns them back on. This is unconditional (there is no parameter
+for it): a preset typically starts several services under the debugger at once, and breakpoints set for one of
+them should not stop all the others. The mute is applied from `XDebuggerManagerListener.processStarted`, the moment
+the IDE creates the session, rather than after the tab is confirmed, so the window in which a breakpoint can still
+hit is the few milliseconds between the two; the session behind the confirmed tab is muted again as a backstop.
+The IDE remembers the toggle per configuration, so re-running it from the Debug tab keeps it muted too.
+
 `wsc` uses it by itself: on a `:debug` entry it asks the IDE for its tools, and when `debug_run_configuration`
 is there it calls it instead of opening a Terminal tab with `--inspect-brk`. Without the plugin `wsc` keeps the
 Terminal route and says how to get the plugin. An explicit `--target=terminal` is still honoured.
