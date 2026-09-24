@@ -19,10 +19,12 @@ import {
     formatExecutionPlan,
     guessedCommands,
     needsTerminalCommands,
+    PIPED_TERMINAL_NOTE,
     shellQuote,
     splitNpmConfigName,
+    usesPipedTerminal,
 } from '../src/exec/planBuilder.js';
-import { DEBUG_CONFIGURATION_TOOL, RUN_CONFIGURATION_TOOL, TERMINAL_TOOL } from '../src/mcp/execute.js';
+import { DEBUG_CONFIGURATION_TOOL, RUN_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL, TERMINAL_TOOL } from '../src/mcp/execute.js';
 import { buildLaunchPlan, normalizeRunConfigs } from '../src/resolve.js';
 
 const require = createRequire(import.meta.url);
@@ -564,5 +566,69 @@ describe('needsTerminalCommands — custom command entries', () => {
     test('a :terminal configuration next to one still does', () => {
         const plan = buildLaunchPlan({ configs: CONFIGS, preset: [seed], requests: [{ name: 'web', mode: 'terminal' }] });
         assert.equal(needsTerminalCommands(plan, 'run-window'), true);
+    });
+});
+
+describe('buildExecutionPlan — a real Terminal tab through the wsc IDE plugin', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+
+    test('a custom entry is opened by the plugin, which titles the tab itself', () => {
+        const [call] = buildExecutionPlan({ plan: buildLaunchPlan({ configs: CONFIGS, preset: [seed] }), terminalTool: true });
+
+        assert.equal(call.tool, TERMINAL_TAB_TOOL);
+        assert.deepEqual(call.arguments, { tabName: 'seed db', command: 'npm i && npm run seed' });
+        // The title travels as an argument, so no session has to be opened under the name, and
+        // the call answers at once, so there is no client-side bound to apply either.
+        assert.equal(call.tabName, undefined);
+        assert.equal(call.timeoutMs, undefined);
+        assert.equal(call.commandSource, 'custom');
+    });
+
+    test('every other terminal launch goes the same way: :terminal, --target=terminal and :debug', () => {
+        const calls = buildExecutionPlan({ plan: plan('web:terminal', 'api:debug'), terminalTool: true });
+
+        assert.deepEqual(calls.map((call) => call.tool), [TERMINAL_TAB_TOOL, TERMINAL_TAB_TOOL]);
+        assert.deepEqual(calls.map((call) => call.arguments.tabName), ['web', 'api']);
+        assert.equal(calls[0].arguments.command, 'npm run web');
+        // The inspector port and the reroute note are about the command, not about the tab.
+        assert.equal(calls[1].debugPort, DEBUG_PORT_BASE);
+        assert.match(String(calls[1].arguments.command), new RegExp(`${DEBUG_FLAG}=${DEBUG_HOST}:${DEBUG_PORT_BASE}`));
+        assert.equal(executionNotes(calls).length, 1);
+
+        const [target] = buildExecutionPlan({ plan: plan('web'), target: 'terminal', terminalTool: true });
+        assert.equal(target.tool, TERMINAL_TAB_TOOL);
+    });
+
+    test('a Run-window entry and a Debug-tool entry are untouched by it', () => {
+        const calls = buildExecutionPlan({ plan: plan('web', 'api:debug'), terminalTool: true, debugTool: true });
+        assert.deepEqual(calls.map((call) => call.tool), [RUN_CONFIGURATION_TOOL, DEBUG_CONFIGURATION_TOOL]);
+    });
+
+    test('without the plugin nothing changes: the IDE\'s own terminal tool, with a named session', () => {
+        const [call] = buildExecutionPlan({ plan: buildLaunchPlan({ configs: CONFIGS, preset: [seed] }) });
+        assert.equal(call.tool, TERMINAL_TOOL);
+        assert.equal(call.tabName, 'seed db');
+    });
+
+    test('--dry-run prints the command it will type into the tab', () => {
+        const calls = buildExecutionPlan({ plan: buildLaunchPlan({ configs: CONFIGS, preset: [seed] }), terminalTool: true });
+        assert.equal(formatExecutionPlan(calls), `→ ${TERMINAL_TAB_TOOL}  npm i && npm run seed`);
+    });
+});
+
+describe('usesPipedTerminal', () => {
+    test('true only for the IDE\'s own terminal tool, which has no real terminal behind it', () => {
+        const piped = buildExecutionPlan({ plan: plan('web:terminal', 'shared') });
+        const real = buildExecutionPlan({ plan: plan('web:terminal', 'shared'), terminalTool: true });
+
+        assert.equal(usesPipedTerminal(piped), true);
+        assert.equal(usesPipedTerminal(real), false);
+        assert.equal(usesPipedTerminal(buildExecutionPlan({ plan: plan('shared') })), false);
+    });
+
+    test('the warning names what goes missing and where to get a real tab', () => {
+        assert.match(PIPED_TERMINAL_NOTE, /not a real terminal/);
+        assert.match(PIPED_TERMINAL_NOTE, /Ctrl-C/);
+        assert.match(PIPED_TERMINAL_NOTE, /wsc IDE plugin/);
     });
 });

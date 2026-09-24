@@ -9,10 +9,12 @@ import {
     launchFailureReason,
     TERMINAL_MAX_LINES,
     TERMINAL_TIMEOUT_MS,
+    TERMINAL_TAB_TOOL,
     TERMINAL_TOOL,
     runConfigurationCall,
     runExecutionPlan,
     terminalCommandCall,
+    terminalTabCall,
 } from '../src/mcp/execute.js';
 import { fakeSession, textResult } from '../test-utils/fake-session.js';
 
@@ -89,6 +91,42 @@ describe('debugConfigurationCall', () => {
         for (const name of ['constructor', 'toString', '__proto__']) {
             assert.equal(debugConfigurationCall(name).arguments.configurationName, name);
         }
+    });
+});
+
+describe('terminalTabCall', () => {
+    test('names the plugin\'s tool, the tab title and the command, and nothing else', () => {
+        // No timeout, no output snapshot, no session name: the plugin opens a real shell tab,
+        // titles it itself and answers as soon as the command has been typed in.
+        assert.deepEqual(terminalTabCall('seed db', 'npm i && npm run seed'), {
+            tool: TERMINAL_TAB_TOOL,
+            arguments: { tabName: 'seed db', command: 'npm i && npm run seed' },
+        });
+    });
+
+    test('a name that collides with Object.prototype is just a name', () => {
+        for (const name of ['constructor', 'toString', '__proto__']) {
+            assert.equal(terminalTabCall(name, 'true').arguments.tabName, name);
+        }
+    });
+});
+
+describe('runExecutionPlan — the plugin\'s real Terminal tab', () => {
+    test('its plain-text answer counts as started, over the shared session', async () => {
+        const main = mockClient(() => 'opened terminal tab "seed db"');
+        const log = mockLog();
+        let named = 0;
+
+        const report = await runExecutionPlan(
+            [{ name: 'seed db', mode: 'terminal', ...terminalTabCall('seed db', 'npm i') }],
+            { client: main.client, connectAs: async () => (named++, main.client), log },
+        );
+
+        assert.deepEqual(main.calls, [{ name: TERMINAL_TAB_TOOL, args: { tabName: 'seed db', command: 'npm i' } }]);
+        assert.equal(named, 0, 'the tab is titled by the plugin, so no session is opened under its name');
+        assert.equal(report.started.length, 1);
+        assert.deepEqual(report.failed, []);
+        assert.ok(log.lines.includes('info: started seed db (terminal)'));
     });
 });
 

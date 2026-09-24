@@ -18,7 +18,13 @@
  * passing runConfigs again would mean a second, weaker lookup by name. The parameters
  * are an options object instead, matching buildLaunchPlan() next door.
  */
-import { debugConfigurationCall, runConfigurationCall, terminalCommandCall } from '../mcp/execute.js';
+import {
+    TERMINAL_TOOL,
+    debugConfigurationCall,
+    runConfigurationCall,
+    terminalCommandCall,
+    terminalTabCall,
+} from '../mcp/execute.js';
 import { isCustomPlanEntry } from '../resolve.js';
 import { customCommandLine } from './customCommands.js';
 
@@ -186,6 +192,18 @@ export function debugNote(ports, opts = {}) {
  */
 export const DEBUG_PLUGIN_HINT =
     'for a real Debug tab instead, install the wsc IDE plugin (see ide-plugin/README.md in the wsc repository)';
+
+/**
+ * What to say when a run opens Terminal tabs through the IDE's own tool.
+ *
+ * Measured, not assumed: that tool runs the command on pipes (see TERMINAL_TOOL), so the
+ * tab shows what the command prints and nothing else. Said once per run, before anything
+ * starts, because a tab that opens and then shows nothing reads as a broken command.
+ */
+export const PIPED_TERMINAL_NOTE =
+    'the IDE\'s own terminal tool runs a command on pipes, not a real terminal: a program that draws ' +
+    'its own screen (ngrok, top, a progress bar) shows nothing in its tab, and Ctrl-C there cannot stop it.\n' +
+    '  For a real Terminal tab, install the wsc IDE plugin (see ide-plugin/README.md in the wsc repository)';
 
 /** Characters that need no quoting in any POSIX shell. */
 const SHELL_SAFE = /^[A-Za-z0-9._:@/+-]+$/;
@@ -363,6 +381,8 @@ const NAME_ONLY = (entry, opts) => ({ command: buildTerminalCommand(entry.config
  * @param {ExecTarget} [args.target]
  * @param {number} [args.debugPortBase] - port of the first debug entry (--debug-port)
  * @param {boolean} [args.debugTool] - the IDE has debug_run_configuration (the wsc plugin)
+ * @param {boolean} [args.terminalTool] - the IDE has open_terminal_tab (the wsc plugin): every
+ *   Terminal tab of the plan is then a real one instead of the IDE's piped runner
  * @param {CommandFor} [args.commandFor] - how a terminal command line is obtained;
  *   defaults to rebuilding it from the configuration's name, which is all
  *   get_run_configurations gives. src/exec/ideaCommands.js supplies the better one.
@@ -374,9 +394,22 @@ export function buildExecutionPlan({
     target = DEFAULT_TARGET,
     debugPortBase = DEBUG_PORT_BASE,
     debugTool = false,
+    terminalTool = false,
     commandFor = NAME_ONLY,
 }) {
     let debugSeen = 0;
+
+    /**
+     * The call behind one Terminal tab, titled `name`. With the plugin's tool it is a real
+     * shell tab that the plugin titles itself; without it, the IDE's own tool, which titles a
+     * tab after the MCP client that opened it — hence `tabName`, which makes the runner open
+     * a session under that name (see runExecutionPlan).
+     *
+     * @param {string} name
+     * @param {string} command
+     */
+    const terminalCall = (name, command) =>
+        terminalTool ? terminalTabCall(name, command) : { ...terminalCommandCall(command), tabName: name };
 
     const calls = plan.map((entry) => {
         if (isCustomPlanEntry(entry)) {
@@ -387,9 +420,8 @@ export function buildExecutionPlan({
             const custom = {
                 name: entry.name,
                 mode: entry.mode,
-                ...terminalCommandCall(customCommandLine(entry.commands)),
+                ...terminalCall(entry.name, customCommandLine(entry.commands)),
                 commandSource: 'custom',
-                tabName: entry.name,
             };
             return custom;
         }
@@ -410,12 +442,10 @@ export function buildExecutionPlan({
                 ? debugConfigurationCall(entry.name)
                 : built === null
                     ? runConfigurationCall(entry.name)
-                    : terminalCommandCall(built.command)),
+                    : terminalCall(entry.name, built.command)),
         };
 
         if (built?.source !== undefined) call.commandSource = built.source;
-        // The tab is titled after the configuration it runs, not "wsc".
-        if (built !== null) call.tabName = entry.name;
         // Carried on the call so the runner can print where to attach, and so the CLI can
         // check the port before anything is launched.
         if (debugPort !== undefined) call.debugPort = debugPort;
@@ -432,6 +462,16 @@ export function buildExecutionPlan({
     }
 
     return calls;
+}
+
+/**
+ * Whether any tab of an execution plan goes through the IDE's own, piped terminal tool.
+ *
+ * @param {McpCall[]} calls
+ * @returns {boolean}
+ */
+export function usesPipedTerminal(calls) {
+    return calls.some((call) => call.tool === TERMINAL_TOOL);
 }
 
 /**

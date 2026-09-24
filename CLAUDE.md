@@ -240,9 +240,8 @@ exercises it.
   and `runExecutionPlan()` makes such a call over `opts.connectAs(name)` — `connectMcp(port, {clientName})`,
   wired in `run()` — closed straight after in a `finally` (the `await` on the call is inside the `try`, the
   trap `withMcpSession()` documents). What was measured about closing is that the *command* keeps running
-  (a file touched eight seconds after its session was closed still appeared); that the *tab* stays open
-  and keeps its title after `close()` was **not** measured — it needs one live, non-dry-run launch
-  (`wsc <name>:terminal`, then look at the IDE), and until someone has done that the feature rests on it.
+  (a file touched eight seconds after its session was closed still appeared), and — from a live launch of a
+  custom command — that the *tab* stays open and keeps its title (`ngrok`) after `close()`.
   A bounded call now ends with a `close()` where it used to leave the session open. `close()` does not
   send the Streamable-HTTP session `DELETE` (`terminateSession()` is never called), so the IDE keeps each
   short-lived server-side session until it expires it — one per Terminal tab instead of one per run.
@@ -258,12 +257,30 @@ exercises it.
   `test/planBuilder.test.js`; `test/cli.integration.test.js` checks the wiring against the real `executePlan()` — only `connectMcp` is
   fake there — and the abort path (a transport error still closes the session that carried it) is pinned in
   `test/execute.test.js`.
-- **`ide-plugin/` — the optional WebStorm plugin that makes `:debug` a real Debug tab.** A small Kotlin plugin
+- **`execute_terminal_command` is not a terminal — `open_terminal_tab` (the plugin's) is.** Measured on
+  WebStorm 2026.2.3 with a diagnostic command sent through the IDE's tool: stdin, stdout and stderr are
+  `pipe:[…]`, `[ -t 1 ]` is false, `TERM` is empty, `tty` says "not a tty". The tab only displays what the
+  command prints, so a program that draws its own screen shows nothing (a custom `ngrok http 8000` showed
+  just its stderr warning) and Ctrl-C in the tab cannot reach it; the tool's schema has no option for a
+  pty. The plugin's `open_terminal_tab(tabName, command)` opens a real shell tab in the project root
+  (`TerminalToolWindowManager.createShellWidget`, deprecated in 262 but in the terminal plugin's main jar —
+  the replacement `TerminalToolWindowTabsManager` is experimental and sits in the optional content module
+  `intellij.terminal.frontend`, which a `<depends>` plugin is not guaranteed to see) and types the command in.
+  `run()` lists the IDE's tools once (`ideToolNames()`, a failed listing is "no plugin") and only when the
+  plan has an entry that `usesTerminal()` would send to the terminal, so a run-window plan pays nothing;
+  `buildExecutionPlan({terminalTool})` then builds every Terminal call through one `terminalCall()` helper —
+  `terminalTabCall(name, command)` with the plugin (no `tabName`, so no named session, and no client-side
+  timeout: it answers once the command is typed in), `terminalCommandCall()` + `tabName` without. Without
+  the tool `PIPED_TERMINAL_NOTE` is warned once per run (`usesPipedTerminal(calls)`). Whether the tab really
+  renders a TUI and takes Ctrl-C is a live check that needs the 0.4.0 plugin installed.
+- **`ide-plugin/` — the optional WebStorm plugin that makes `:debug` a real Debug tab (and Terminal tabs real terminals).** A small Kotlin plugin
   (Gradle + IntelliJ Platform Gradle Plugin, built against the installed IDE — see `ide-plugin/README.md`) that
-  registers one MCP tool, `debug_run_configuration(configurationName)`, which starts the configuration with
+  registers two MCP tools: `open_terminal_tab` (the bullet above) and `debug_run_configuration(configurationName)`,
+  which starts the configuration with
   `DefaultDebugExecutor` on the EDT and waits up to 10 s for the IDE's callback that the tab exists (an error,
-  not a soft answer, when it never does). `runCli` asks `client.listTools()` — only when the plan has a `:debug`
-  entry, and a failed listing means "no plugin", never a failed launch (`hasDebugTool()` in `src/cli.js`) —
+  not a soft answer, when it never does). `runCli` asks `client.listTools()` — only when the plan has an entry
+  that would otherwise go to the terminal, `:debug` included, and a failed listing means "no plugin", never a
+  failed launch (`ideToolNames()` in `src/cli.js`) —
   and passes `debugTool` to `buildExecutionPlan()`/`needsTerminalCommands()`. With the tool a `:debug` entry
   becomes `debugConfigurationCall(name)`: no command, no inspector port, no reroute note, no `.idea/` read, and
   the IDE attaches to the child processes of an npm script too, which is what fixes p6-3 (the Terminal route
