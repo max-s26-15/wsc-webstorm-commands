@@ -11,6 +11,10 @@ import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
 import com.intellij.mcpserver.project
 import com.intellij.openapi.application.EDT
+import com.intellij.xdebugger.XDebugProcess
+import com.intellij.xdebugger.XDebugSession
+import com.intellij.xdebugger.XDebuggerManager
+import com.intellij.xdebugger.XDebuggerManagerListener
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -28,7 +32,8 @@ class WscDebugToolset : McpToolset {
     @McpDescription(
         """
         |Start an existing run configuration with the Debug executor, the same as pressing its Debug button:
-        |a Debug tab opens and the debugger attaches. Does not wait for the process to exit.
+        |a Debug tab opens and the debugger attaches, with breakpoints muted (the session's "Mute Breakpoints"
+        |toggle is on; the user turns it off in the Debug tab to start stopping). Does not wait for the process to exit.
         |
         |Use a configuration name returned by `get_run_configurations`.
         """,
@@ -56,21 +61,52 @@ class WscDebugToolset : McpToolset {
             started.complete(descriptor?.displayName ?: configurationName)
         }
 
-        // Starting a run touches UI state; the IDE's own actions do it on the EDT.
-        withContext(Dispatchers.EDT) {
-            val environment = ExecutionEnvironmentBuilder.createOrNull(executor, settings)?.build()
-                ?: throw fail("\"$configurationName\" cannot be debugged: the IDE could not build an execution environment")
-            ProgramRunnerUtil.executeConfigurationAsync(environment, false, true, callback)
-        }
-
-        // An error, not a soft answer: wsc reports a tool failure against the configuration, and
-        // "the IDE never confirmed" is exactly what a refused launch looks like from here.
-        val tab = withTimeoutOrNull(CONFIRM_TIMEOUT_MS) { started.await() }
-            ?: throw fail(
-                "the IDE did not confirm within ${CONFIRM_TIMEOUT_MS / 1000}s that the debug session for " +
-                    "\"$configurationName\" started — check the Debug tool window",
+        // Every session wsc starts comes up with breakpoints muted. It is done the moment the IDE
+        // creates the session (processStarted), not once the tab is confirmed: by then the program
+        // has been running for a while and could already have stopped on a breakpoint. Matched by
+        // run profile, since the listener hears every debug session in the project.
+        val connection = project.messageBus.connect()
+        try {
+            connection.subscribe(
+                XDebuggerManager.TOPIC,
+                object : XDebuggerManagerListener {
+                    override fun processStarted(debugProcess: XDebugProcess) {
+                        val session = debugProcess.session
+                        if (session.runProfile === settings.configuration) mute(session)
+                    }
+                },
             )
-        return "started a debug session for \"$configurationName\" (tab: $tab)"
+
+            // Starting a run touches UI state; the IDE's own actions do it on the EDT.
+            withContext(Dispatchers.EDT) {
+                val environment = ExecutionEnvironmentBuilder.createOrNull(executor, settings)?.build()
+                    ?: throw fail("\"$configurationName\" cannot be debugged: the IDE could not build an execution environment")
+                ProgramRunnerUtil.executeConfigurationAsync(environment, false, true, callback)
+            }
+
+            // An error, not a soft answer: wsc reports a tool failure against the configuration, and
+            // "the IDE never confirmed" is exactly what a refused launch looks like from here.
+            val tab = withTimeoutOrNull(CONFIRM_TIMEOUT_MS) { started.await() }
+                ?: throw fail(
+                    "the IDE did not confirm within ${CONFIRM_TIMEOUT_MS / 1000}s that the debug session for " +
+                        "\"$configurationName\" started — check the Debug tool window",
+                )
+
+            // Backstop for a session the listener did not recognise (a runner that copies the run
+            // profile, say): the one behind the tab the IDE just confirmed.
+            withContext(Dispatchers.EDT) {
+                XDebuggerManager.getInstance(project).debugSessions
+                    .filter { it.runProfile === settings.configuration || it.runContentDescriptor.displayName == tab }
+                    .forEach(::mute)
+            }
+            return "started a debug session for \"$configurationName\" with breakpoints muted (tab: $tab)"
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun mute(session: XDebugSession) {
+        if (!session.areBreakpointsMuted()) session.setBreakpointMuted(true)
     }
 
     private fun fail(text: String) = McpExpectedError(text, JsonObject(emptyMap()))

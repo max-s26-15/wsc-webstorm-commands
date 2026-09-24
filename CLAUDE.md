@@ -290,7 +290,10 @@ exercises it.
   and passes `debugTool` to `buildExecutionPlan()`/`needsTerminalCommands()`. With the tool a `:debug` entry
   becomes `debugConfigurationCall(name)`: no command, no inspector port, no reroute note, no `.idea/` read, and
   the IDE attaches to the child processes of an npm script too, which is what fixes p6-3 (the Terminal route
-  debugged npm itself). Without it everything below is unchanged and the reroute note is followed by
+  debugged npm itself). Since 0.5.0 the session always starts with breakpoints muted (user's call: always, no
+  flag or preset field) — `setBreakpointMuted(true)` from an `XDebuggerManager.TOPIC` `processStarted` listener
+  matched on the run profile, plus a backstop on the confirmed tab; the CLI is untouched. The Terminal route has
+  no IDE session, so nothing is muted there. Without it everything below is unchanged and the reroute note is followed by
   `DEBUG_PLUGIN_HINT`. An explicit `--target=terminal` still wins: the user named the terminal. Ports are handed
   out only to entries that use one, so "attach to port 9230" never names a port nothing listens on. MCP tools
   must be Kotlin `suspend` functions on a `McpToolset` class registered through the `mcpServer.mcpToolset`
