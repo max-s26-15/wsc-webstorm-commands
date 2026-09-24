@@ -18,6 +18,7 @@ walks the whole pipeline (args → project → preset → MCP → resolve → la
 both paths. The five-point acceptance checklist was run end to end against the live IDE on `demo-app`.
 Since then: the user's own CLI commands in a preset (`commands` on an entry) — an entry with no run
 configuration behind it, launched as a named Terminal tab.
+Since then: Tab completion for zsh and bash (`wsc --completion <shell>`, `src/completion/`).
 What is left is user-triggered: `/code-review` over the whole diff before the first version tag.
 
 ## Commands
