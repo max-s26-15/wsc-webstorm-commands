@@ -32,6 +32,7 @@ export const OPTIONS = {
     'debug-port': { type: 'string' },
     'dry-run': { type: 'boolean' },
     fallback: { type: 'string' },
+    completion: { type: 'string' },
 };
 
 /**
@@ -159,6 +160,7 @@ export function parseRequests(tokens, opts = {}) {
  *   'debug-port'?: string,
  *   'dry-run'?: boolean,
  *   fallback?: string,
+ *   completion?: string,
  * }} CliValues
  */
 

@@ -30,3 +30,6 @@ Thumbs.db
 .claude/worktrees
 .claude/agents
 .claude/settings.local.json
+
+# Design specs and implementation plans: kept on disk, not versioned
+docs/

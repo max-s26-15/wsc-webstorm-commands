@@ -11,6 +11,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { runCli } from '../src/cli.js';
+import { BASH_SCRIPT, ZSH_SCRIPT } from '../src/completion/scripts.js';
 import { formatRunConfigs } from '../src/list.js';
 import { FIXTURE, fakeCliDeps } from '../test-utils/fake-cli-deps.js';
 import { tmpIdeaProject, tmpProject } from '../test-utils/tmp-dir.js';
@@ -133,6 +134,60 @@ describe('flag table — -c/--configure', () => {
 
         assert.equal(result.code, 2);
         assert.match(result.output, /--configure launches nothing, so --dry-run would be ignored/);
+    });
+});
+
+// ── --completion ─────────────────────────────────────────────────────────────
+describe('flag table — --completion', () => {
+    test('prints the zsh script to stdout, and contacts nothing', async () => {
+        const result = await wsc(['--completion', 'zsh']);
+
+        assert.equal(result.code, 0);
+        assert.equal(result.stdout, ZSH_SCRIPT);
+        assert.equal(result.stderr, '');
+        assert.deepEqual(result.calls, []);
+        assert.deepEqual(result.executed, []);
+    });
+
+    test('prints the bash script for bash', async () => {
+        const result = await wsc(['--completion=bash']);
+
+        assert.equal(result.code, 0);
+        assert.equal(result.stdout, BASH_SCRIPT);
+    });
+
+    test('a shell it has no script for is a usage error that names the ones it has', async () => {
+        const result = await wsc(['--completion', 'fish']);
+
+        assert.equal(result.code, 2);
+        assert.match(result.output, /--completion: expected one of zsh, bash, got "fish"/);
+    });
+
+    test('a missing value is a usage error', async () => {
+        assert.equal((await wsc(['--completion'])).code, 2);
+    });
+
+    test('takes no configuration names and no other flag', async () => {
+        for (const argv of [
+            ['--completion', 'zsh', 'web'],
+            ['--completion', 'zsh', '--dry-run'],
+            ['--completion', 'zsh', '--list'],
+            ['--completion', 'zsh', '--preset', 'a'],
+            ['-c', '--completion', 'zsh'],
+        ]) {
+            const result = await wsc(argv);
+            assert.equal(result.code, 2, argv.join(' '));
+            assert.match(result.output, /--completion prints a script and takes nothing else/);
+            assert.equal(result.stdout, '');
+        }
+    });
+
+    test('--help still wins, and lists the flag', async () => {
+        const result = await wsc(['--completion', 'zsh', '--help']);
+
+        assert.equal(result.code, 0);
+        assert.match(result.stdout, /--completion <sh>/);
+        assert.doesNotMatch(result.stdout, /#compdef wsc/);
     });
 });
 
