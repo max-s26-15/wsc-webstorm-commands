@@ -271,8 +271,9 @@ exercises it.
   `buildExecutionPlan({terminalTool})` then builds every Terminal call through one `terminalCall()` helper —
   `terminalTabCall(name, command)` with the plugin (no `tabName`, so no named session, and no client-side
   timeout: it answers once the command is typed in), `terminalCommandCall()` + `tabName` without. Without
-  the tool `PIPED_TERMINAL_NOTE` is warned once per run (`usesPipedTerminal(calls)`). Whether the tab really
-  renders a TUI and takes Ctrl-C is a live check that needs the 0.4.0 plugin installed.
+  the tool `PIPED_TERMINAL_NOTE` is warned once per run (`usesPipedTerminal(calls)`). Checked live with 0.4.0
+  installed: the same `ngrok http 8000` custom command now draws its full screen in the tab (Ctrl-C was not
+  separately checked). The README blocks showing `→ open_terminal_tab` were re-captured with it installed.
 - **`ide-plugin/` — the optional WebStorm plugin that makes `:debug` a real Debug tab (and Terminal tabs real terminals).** A small Kotlin plugin
   (Gradle + IntelliJ Platform Gradle Plugin, built against the installed IDE — see `ide-plugin/README.md`) that
   registers two MCP tools: `open_terminal_tab` (the bullet above) and `debug_run_configuration(configurationName)`,
