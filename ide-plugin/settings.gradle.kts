@@ -1,1 +1,1 @@
-rootProject.name = "wsc-ide-plugin"
+rootProject.name = "wsc-companion"

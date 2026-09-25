@@ -1,15 +1,19 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+
 plugins {
     kotlin("jvm") version "2.4.20"
     id("org.jetbrains.intellij.platform") version "2.19.0"
 }
 
 group = "dev.wsc"
-version = "0.5.0"
+version = "0.5.1"
 
-// Built against the WebStorm that is already installed, not a downloaded copy: the MCP Server
-// plugin this one extends is a bundled plugin whose API is only guaranteed for its own build.
-// Override with -PwebstormPath=... when the IDE is installed somewhere else.
-val webstormPath = providers.gradleProperty("webstormPath").orElse("/snap/webstorm/current")
+// The WebStorm this plugin is built and verified against. CI downloads it; locally,
+// -PwebstormPath=/snap/webstorm/current builds against an installed IDE instead (faster, offline).
+// The MCP Server API it extends is not a stable one, so this is also the only build it is
+// declared compatible with (untilBuild below).
+val webstormVersion = "2026.2.3"
+val webstormPath = providers.gradleProperty("webstormPath")
 
 repositories {
     mavenCentral()
@@ -18,7 +22,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        local(webstormPath)
+        if (webstormPath.isPresent) local(webstormPath.get()) else webstorm(webstormVersion)
         bundledPlugin("com.intellij.mcpServer")
         bundledPlugin("org.jetbrains.plugins.terminal")
     }
@@ -30,7 +34,20 @@ intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "262"
-            untilBuild = provider { null }
+            untilBuild = "262.*"
         }
+    }
+    pluginVerification {
+        ides {
+            create(IntelliJPlatformType.WebStorm, webstormVersion)
+        }
+    }
+    signing {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
     }
 }
