@@ -444,7 +444,7 @@ exercises it.
   (reproduced against a plain HTTP server that answers `/sse` with `text/event-stream` and 404s `/stream`).
   `RunConfigPayloadError` (`src/resolve.js`) is what `normalizeRunConfigs()` throws instead of a bare
   `TypeError`: a bare one reads as a bug inside wsc and was rethrown the same way. It stays a `TypeError`
-  subclass so nothing that caught one stops working, and its message points at `npm run mcp:probe`, since
+  subclass so nothing that caught one stops working, and its message points at `wsc-mcp-probe`, since
   the plan's own risk table calls a change in the IDE's tool signatures the likeliest cause.
 - **`McpError` (the SDK's own class) is in `KNOWN_ERRORS`.** Before phase 6 the only MCP call was
   `get_run_configurations`, so a transport/protocol failure was near-unreachable; a launch makes it routine
@@ -502,9 +502,10 @@ exercises it.
   *values*, the npm script, the entry file) — including the npm subcommand, which is one word out of the
   IDE's own dropdown, so `npm 'install'` costs nothing and a hand-edited `install; …` stops being two
   commands. An env var *name* is the one field that cannot be quoted (`'A B'=x` is a command called `A B=x`,
-  not an assignment), so it is validated against `ENV_NAME` and refused otherwise. `config.args` is the
-  single deliberate exception: it is shell text the user typed into the IDE, and quoting it would turn
-  `--port 3000` into one word. The regression tests run the built line through a real `/bin/sh` with `npm`
+  not an assignment), so it is validated against `ENV_NAME` and refused otherwise. `config.args` and a
+  Node.js configuration's `node-parameters` (`config.nodeArgs`) are the two deliberate exceptions: both are
+  shell text the user typed into the IDE, and quoting them would turn `--port 3000` into one word — which
+  also means a hostile checked-in `.idea/` can put shell text there, and SECURITY.md says so. The regression tests run the built line through a real `/bin/sh` with `npm`
   stubbed out and assert that no second process ran, each with a control proving the unquoted form really
   does run one.
 - **"Project node" is resolved from `.nvmrc`, in `readIdeaRunConfigs()` (`src/fallback/projectNode.js`).** A Node.js
@@ -602,7 +603,10 @@ exercises it.
 - `scripts/mcp-probe.js` — manual diagnostic script, deliberately **not** part of the CLI. Walks
   discover → connect → list tools → `get_run_configurations` against a real, running WebStorm instance and
   reports each step separately. Keep this working across IDE upgrades; it's the fastest way to see what a
-  new WebStorm version actually returns.
+  new WebStorm version actually returns. It is also published, as the `wsc-mcp-probe` bin, so everything it
+  prints names that command, not `node scripts/…`; it sends the project's *real* path, like `wsc` (the IDE
+  answers "not an open project" for a symlinked one — checked live); and `--save-fixture` refuses outside a
+  clone, because `test/` is not in the package.
 
 ## Testing conventions
 

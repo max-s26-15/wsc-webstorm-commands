@@ -23,7 +23,9 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
+      # Trusted publishing needs npm >= 11.5.1. Pinned, not @latest: this job holds id-token: write,
+      # so whatever npm release it installs is what publishes. Bump deliberately.
+      - run: npm install -g npm@12.1.0
       - run: npm ci
 
       - id: tag

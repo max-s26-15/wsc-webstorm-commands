@@ -132,16 +132,26 @@ describe('runSingleTabPool', () => {
 
     test('a missing bash is one readable line, not a spawn error per tab', async () => {
         // Windows without Git Bash: every tab fails the same way, and ENOENT says nothing useful.
-        const enoent = Object.assign(new Error('spawn bash ENOENT'), { code: 'ENOENT' });
-        const { spawn } = fakeSpawn({ pipes: true, failWith: enoent });
+        // Node's order for a failed spawn: 'error', then 'close' with a negative code
+        // (-2 on POSIX, -4058 on Windows) — neither may add a line per configuration.
+        const enoent = () => Object.assign(new Error('spawn bash ENOENT'), { code: 'ENOENT' });
+        const { spawn, children } = fakeSpawn({ pipes: true, manual: true });
         const { log, err } = testLogger({ NO_COLOR: '1' });
 
-        const code = await runSingleTabPool(TABS, { cwd: '/p', log, spawn, process: fakeSignals(), platform: 'win32' });
+        const run = runSingleTabPool(TABS, { cwd: '/p', log, spawn, process: fakeSignals(), platform: 'win32' });
+        for (const child of children) {
+            child.emit('error', enoent());
+            child.finish(-4058);
+        }
 
-        assert.equal(code, 1);
+        assert.equal(await run, 1);
+        // Let the 'close' events that follow each 'error' be delivered before reading.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
         const errors = err().split('\n').filter((line) => line.startsWith('error:'));
         assert.deepEqual(errors, [`error: ${missingShellMessage()}`]);
         assert.doesNotMatch(err(), /ENOENT/);
+        assert.doesNotMatch(err(), /exited with code/);
         assert.match(missingShellMessage(), /Git Bash/);
     });
 

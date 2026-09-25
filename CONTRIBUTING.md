@@ -85,6 +85,8 @@ Two version lines, released independently by tag:
 3. Merge to `main`, then push a tag on `main`: `v<version>` for the CLI, `plugin-v<version>` for the
    plugin. `release-cli.yml` / `plugin.yml` check the tag against the version, publish, and create the
    GitHub Release; a version that is already published is skipped, so a rerun is safe.
+   A plugin version uploaded by hand (the first one) is only "published" once Marketplace has approved
+   it — tag it after the approval, or the workflow uploads it a second time and fails.
 
 ## Pull requests
 

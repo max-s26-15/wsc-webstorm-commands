@@ -141,7 +141,12 @@ export async function runSingleTabPool(tabs, opts) {
                 return buffer;
             });
 
+            // A child that never started: Node follows its 'error' with a 'close' carrying a
+            // negative code, which must not add a status line (or a failure) of its own.
+            let failedToStart = false;
+
             child.on('error', (err) => {
+                failedToStart = true;
                 if (/** @type {NodeJS.ErrnoException} */ (err).code === 'ENOENT') {
                     // The shell itself is missing: every tab fails the same way, so say it once, in words.
                     if (!missingShellReported) log.error(missingShellMessage());
@@ -158,6 +163,7 @@ export async function runSingleTabPool(tabs, opts) {
             child.on('close', (code, signal) => {
                 for (const buffer of buffers) buffer.flush();
 
+                if (failedToStart) return;
                 if (signal !== null) log.tagged(tab.name, `stopped by ${signal}`);
                 else if (code !== 0) {
                     log.tagged(tab.name, `exited with code ${code}`);

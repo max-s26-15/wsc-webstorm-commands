@@ -35,8 +35,12 @@ jobs:
       - id: version
         run: echo "version=$(node ../scripts/release.js gradle-version)" >> "$GITHUB_OUTPUT"
 
+      # Every check that can stop a release runs before anything is signed or published:
+      # the tag names the version, and that version has its CHANGELOG entry.
       - if: startsWith(github.ref, 'refs/tags/plugin-v')
-        run: node ../scripts/release.js check "$GITHUB_REF_NAME" plugin-v "${{ steps.version.outputs.version }}"
+        run: |
+          node ../scripts/release.js check "$GITHUB_REF_NAME" plugin-v "${{ steps.version.outputs.version }}"
+          node ../scripts/release.js notes plugin "${{ steps.version.outputs.version }}" > "$RUNNER_TEMP/notes.md"
 
       - run: ./gradlew buildPlugin verifyPlugin
 
@@ -57,6 +61,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/plugin-v')
         name: Already on Marketplace?
         # The list answers 404 for a plugin that was never uploaded, which reads as "not published".
+        # It is public and anonymous, so a version still in moderation is not on it either: tag
+        # plugin-v<version> only after Marketplace has approved a hand-uploaded version.
         run: |
           if curl -fsS 'https://plugins.jetbrains.com/plugins/list?pluginId=dev.wsc.ide' \
                | grep -q "<version>${{ steps.version.outputs.version }}</version>"; then
@@ -79,7 +85,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.version.outputs.version }}"
-          node ../scripts/release.js notes plugin "$version" > "$RUNNER_TEMP/notes.md"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "wsc Companion $version" --notes-file "$RUNNER_TEMP/notes.md"
           gh release upload "$GITHUB_REF_NAME" build/distributions/*-signed.zip --clobber
