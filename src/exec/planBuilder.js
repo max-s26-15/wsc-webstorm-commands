@@ -191,7 +191,7 @@ export function debugNote(ports, opts = {}) {
  * where no IDE is involved and a plugin is not an answer to anything.
  */
 export const DEBUG_PLUGIN_HINT =
-    'for a real Debug tab instead, install the wsc IDE plugin (see ide-plugin/README.md in the wsc repository)';
+    'for a real Debug tab instead, install wsc Companion (WebStorm → Settings → Plugins → Marketplace)';
 
 /**
  * What to say when a run opens Terminal tabs through the IDE's own tool.
@@ -203,7 +203,7 @@ export const DEBUG_PLUGIN_HINT =
 export const PIPED_TERMINAL_NOTE =
     'the IDE\'s own terminal tool runs a command on pipes, not a real terminal: a program that draws ' +
     'its own screen (ngrok, top, a progress bar) shows nothing in its tab, and Ctrl-C there cannot stop it.\n' +
-    '  For a real Terminal tab, install the wsc IDE plugin (see ide-plugin/README.md in the wsc repository)';
+    '  For a real Terminal tab, install wsc Companion (WebStorm → Settings → Plugins → Marketplace)';
 
 /** Characters that need no quoting in any POSIX shell. */
 const SHELL_SAFE = /^[A-Za-z0-9._:@/+-]+$/;

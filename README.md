@@ -10,7 +10,7 @@ working directory and environment. Nothing is re-implemented and nothing is gues
 It comes in two parts:
 
 - **`wsc`, a command-line tool** (Node.js). This is all you need to launch configurations.
-- **A small WebStorm plugin** (`ide-plugin/`, optional but recommended). It adds two tools to the
+- **wsc Companion, a small WebStorm plugin** (`ide-plugin/`, optional but recommended). It adds two tools to the
   IDE's MCP Server. One makes `wsc name:debug` open a **real Debug tab**; without it, `:debug` falls
   back to a Terminal tab with a bare Node inspector that you attach to by hand — see
   [Debugging](#debugging-debug). The other makes every Terminal tab `wsc` opens a **real terminal**;
@@ -68,7 +68,7 @@ if that ever fails, pass it with `--mcp-port <n>` / `WSC_MCP_PORT`, or pin it wi
 At this point `wsc` already works — try `wsc --list` inside a project that is open in WebStorm.
 The next step is for the Debug tab and for real Terminal tabs.
 
-### 3. Install the IDE plugin, and restart the IDE
+### 3. Install wsc Companion, and restart the IDE
 
 1. Download `wsc-companion-<version>-signed.zip` from the latest `plugin-v*` release on
    [GitHub](https://github.com/max-s26-15/wsc-webstorm-commands/releases).
@@ -89,8 +89,8 @@ $ wsc-mcp-probe /home/max-s26/max/new-projects/wsc-webstorm-commands
 ✓ get_run_configurations
 ✓ execute_run_configuration
 ✓ execute_terminal_command
-✓ debug_run_configuration (optional, from the wsc IDE plugin)
-✓ open_terminal_tab (optional, from the wsc IDE plugin)
+✓ debug_run_configuration (optional, from the wsc Companion plugin)
+✓ open_terminal_tab (optional, from the wsc Companion plugin)
 ✓ 5 run configurations
   mcp:probe      npm
   test           npm
@@ -563,8 +563,9 @@ not atomic, because by then the user has already been told what is coming.
 - **The plugin's tool can fail for a configuration, and `wsc` then reports it rather than falling
   back to the Terminal.** For example a configuration no debug runner accepts. It also gives the IDE
   10 seconds to confirm that the Debug tab exists, and reports a launch as failed if it does not.
-- **The plugin is tied to the IDE build.** It extends an MCP API that JetBrains does not document as
-  stable: after a WebStorm update, install the matching plugin release (see [Updating](#updating)).
+- **wsc Companion supports one WebStorm major at a time** (currently 2026.2). It extends an MCP API
+  that JetBrains does not document as stable: after a WebStorm major update, wait for its matching
+  release (see [Updating](#updating)).
 - **A configuration WebStorm has not saved yet gets a guessed command line.**
   `--target=terminal`, `:terminal` and the Terminal route of `:debug` need a shell command, and
   `get_run_configurations` reports only a name and a type — so the real definition is read out of
@@ -595,4 +596,4 @@ npm run mcp:probe     # manual diagnostic against a live WebStorm instance
 ```
 
 `CLAUDE.md` documents the architecture and the reasoning behind each design decision;
-`ide-plugin/README.md` covers the plugin.
+`ide-plugin/README.md` covers building the plugin.

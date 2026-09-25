@@ -1,8 +1,7 @@
 <idea-plugin>
-    <id>dev.wsc.debug-tool</id>
-    <name>wsc Debug Tool</name>
-    <vendor>wsc</vendor>
-    <version>0.5.0</version>
+    <id>dev.wsc.ide</id>
+    <name>wsc Companion</name>
+    <vendor url="https://github.com/max-s26-15/wsc-webstorm-commands">Max Soltys</vendor>
 
     <description><![CDATA[
         Adds two tools to the IDE's built-in MCP Server, used by the <code>wsc</code> command line tool.
@@ -15,6 +14,8 @@
             executes a command in it. The IDE's own <code>execute_terminal_command</code> runs commands on pipes, so
             programs that draw their own screen show nothing there and Ctrl-C cannot reach them.</li>
         </ul>
+        <p>Source code and the <code>wsc</code> command line tool:
+        <a href="https://github.com/max-s26-15/wsc-webstorm-commands">github.com/max-s26-15/wsc-webstorm-commands</a> (MIT).</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

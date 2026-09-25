@@ -1,6 +1,9 @@
-# wsc IDE plugin
+# wsc Companion
 
 A tiny WebStorm plugin that adds two tools to the IDE's built-in MCP Server.
+
+Until 0.5.0 it was called "wsc Debug Tool" (`dev.wsc.debug-tool`); 0.5.1 changed the plugin ID to
+`dev.wsc.ide`, so the IDE sees a different plugin — uninstall "wsc Debug Tool" once.
 
 `debug_run_configuration(configurationName)` — start an existing run configuration with the **Debug** executor,
 the same as its Debug button. The IDE's own `execute_run_configuration` only ever uses the Run executor, which is
@@ -39,17 +42,24 @@ to see, so expect to touch this after a WebStorm update.
 
 ## Build
 
-Needs a JDK (the one bundled with WebStorm works) and network access for Gradle. It builds against the
-installed IDE, not a downloaded one.
+Needs a JDK 21 (the one bundled with WebStorm works) and network access for Gradle. By default it
+downloads WebStorm 2026.2.3 and builds against that — what CI does:
 
 ```bash
 cd ide-plugin
-JAVA_HOME=/snap/webstorm/current/jbr ./gradlew buildPlugin
-# -> build/distributions/wsc-ide-plugin-0.4.0.zip
+./gradlew buildPlugin verifyPlugin
+# -> build/distributions/wsc-companion-<version>.zip
 ```
 
-Another install location: `-PwebstormPath=/path/to/webstorm`. The plugin declares `since-build 262`; the
-MCP Server API it uses is not a documented stable API, so rebuild after a WebStorm update.
+To build against a WebStorm you already have installed instead (faster, and offline after the first
+build), point it at the folder that contains `product-info.json`:
+
+```bash
+JAVA_HOME=/snap/webstorm/current/jbr ./gradlew buildPlugin -PwebstormPath=/snap/webstorm/current
+```
+
+The plugin declares compatibility with build 262 only (`262.*`): the MCP Server API it uses is not a
+documented stable API, so a new WebStorm major needs a new plugin release.
 
 ## Install and check
 

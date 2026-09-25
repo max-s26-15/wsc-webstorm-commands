@@ -1423,7 +1423,7 @@ describe('runCli — :debug through the wsc IDE plugin', () => {
         assert.deepEqual(launched(tools), [TOOL]);
         assert.deepEqual(calls.find((c) => c.name === TOOL)?.args, { configurationName: 'api' });
         assert.doesNotMatch(output, /Terminal window/);
-        assert.doesNotMatch(output, /wsc IDE plugin/, 'no advice to install what is already installed');
+        assert.doesNotMatch(output, /wsc Companion/, 'no advice to install what is already installed');
         assert.match(output, /started api \(debug\)/);
     });
 
@@ -1432,7 +1432,7 @@ describe('runCli — :debug through the wsc IDE plugin', () => {
         assert.equal(code, 0);
         assert.deepEqual(launched(tools), ['execute_terminal_command']);
         assert.match(output, /debug mode goes through the IDE's Terminal window/);
-        assert.match(output, /for a real Debug tab instead, install the wsc IDE plugin/);
+        assert.match(output, /for a real Debug tab instead, install wsc Companion/);
     });
 
     test('an explicit --target=terminal is honoured even when the plugin is there', async () => {
@@ -1526,7 +1526,7 @@ describe('runCli — a real Terminal tab through the wsc IDE plugin', () => {
         assert.equal(code, 0);
         assert.deepEqual(calls.map((c) => c.name), ['execute_terminal_command', 'execute_terminal_command']);
         assert.equal(output.match(new RegExp(PIPED, 'g'))?.length, 1);
-        assert.match(output, /wsc IDE plugin/);
+        assert.match(output, /wsc Companion/);
     });
 
     test('a failed tool listing means "no plugin", not a failed launch', async () => {
@@ -1737,6 +1737,15 @@ describe('runCli — --delete-preset', () => {
         const h = fakeCliDeps();
         assert.equal(await runCli(['--help'], h.deps), 0);
         assert.match(h.stdout(), /--delete-preset <n> delete a preset/);
+    });
+});
+
+describe('runCli — --help and the IDE plugin', () => {
+    test('--help names the plugin by its Marketplace name', async () => {
+        const h = fakeCliDeps();
+        assert.equal(await runCli(['--help'], h.deps), 0);
+        assert.match(h.output(), /wsc Companion/);
+        assert.doesNotMatch(h.output(), /ide-plugin\/README/);
     });
 });
 
