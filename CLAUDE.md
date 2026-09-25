@@ -180,6 +180,17 @@ exercises it.
   broken-`defaultPreset` errors. All three are deliberate: a preset that is empty, misnamed, or points at a
   configuration the IDE has since dropped is exactly what the user opened the screen to fix, so none of it
   may be a precondition. `test/cli.test.js` pins this with a stale-preset case.
+- **`src/exec/terminalShell.js` — Windows refuses the POSIX terminal routes, before the first call.** Every
+  command wsc types into a Terminal tab is POSIX shell (`debugEnvPrefix()`'s expansion, `cd … &&`, the `.nvmrc`
+  `PATH=` prefix, `shellQuote()`, custom `&&` chains), and WebStorm's terminal on Windows is PowerShell unless
+  changed; the MCP API does not say which shell it runs. So `assertPosixTerminal(calls, {platform, env})` runs
+  in `run()` right after `buildExecutionPlan()` and *before* the `--dry-run` guard: on `win32` any call through
+  `execute_terminal_command` / `open_terminal_tab` throws `PosixTerminalRequiredError` (in `KNOWN_ERRORS`)
+  naming those entries, unless `WSC_POSIX_TERMINAL=1` — the user's promise that the IDE terminal is Git Bash
+  or WSL; any other value is not that promise. The run window and the plugin's `debug_run_configuration` are
+  never refused (the IDE builds those command lines). It is a new class rather than `UnsupportedLaunchError`,
+  whose message ("only knows how to do that for npm configurations") would be untrue here. `runCli` takes
+  `deps.platform`; `fakeCliDeps()` defaults it to `linux`, because the plans its tests pin are POSIX text.
 - `src/exec/inspectorPorts.js` — the one impure half of the debug path: `isPortFree()`/`findBusyPorts()`
   bind-test a port instead of connecting to it, because a bind reproduces exactly the `EADDRINUSE` Node's
   inspector would hit (including a listener bound to `0.0.0.0`, which a connect-probe on `127.0.0.1` also

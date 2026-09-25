@@ -28,6 +28,16 @@ answering" examples. Paths such as `/home/max-s26/.nvm/…` are the author's; yo
 - **WebStorm 2026.2** (build 262), running, with the project open. Its built-in MCP Server is what
   `wsc` talks to. Developed and tested on Linux with WebStorm 2026.2.3.
 
+### Windows
+
+Run/Debug tabs, `:debug` with the plugin, `--list`, `--configure` and `--delete-preset` work, and
+the test suite runs on Windows in CI. `:terminal`, `--target=terminal`, `:debug` without the plugin
+and custom `commands` type a POSIX shell command into the IDE's terminal, which on Windows is
+PowerShell by default — `wsc` refuses those before anything starts. To use them, set Git Bash or
+WSL as WebStorm's terminal shell (**Settings → Tools → Terminal → Shell path**) and run with
+`WSC_POSIX_TERMINAL=1`. `--fallback=terminal` needs `bash` on `PATH` (Git Bash). Windows has not
+been checked by hand yet.
+
 ## Installation
 
 ### 1. Install the `wsc` command
