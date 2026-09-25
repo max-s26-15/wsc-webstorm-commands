@@ -56,7 +56,8 @@ describe('completeCommand — sources', () => {
         const project = await tmpIdeaProject({ presets: PRESETS });
         const elsewhere = await tmpDir('wsc-elsewhere-');
         try {
-            const { out } = await complete(elsewhere.dir, ['zsh', `wsc --project ${project.dir} --preset `]);
+            // Quoted as a user would have to: a Windows path's backslashes are escapes to the shell.
+            const { out } = await complete(elsewhere.dir, ['zsh', `wsc --project '${project.dir}' --preset `]);
             assert.equal(out, 'values\ndefault\nbackend\n');
         } finally {
             await elsewhere.cleanup();
@@ -77,7 +78,9 @@ describe('completeCommand — sources', () => {
     test('a leading ~ in --project means the home directory', async () => {
         const home = await tmpDir('wsc-home-');
         const elsewhere = await tmpDir('wsc-elsewhere-');
+        // os.homedir() reads HOME on POSIX and USERPROFILE on Windows; point both at the fake home.
         const previous = process.env.HOME;
+        const previousProfile = process.env.USERPROFILE;
         try {
             // The home directory is a project itself, and so is one folder below it.
             for (const dir of [home.dir, path.join(home.dir, 'work', 'app')]) {
@@ -85,6 +88,7 @@ describe('completeCommand — sources', () => {
                 await fs.writeFile(path.join(dir, '.idea', 'webstorm-commands.json'), PRESETS);
             }
             process.env.HOME = home.dir;
+            process.env.USERPROFILE = home.dir;
 
             for (const project of ['~', '~/', '~/work/app']) {
                 const { out } = await complete(elsewhere.dir, ['zsh', `wsc --project ${project} --preset `]);
@@ -93,6 +97,8 @@ describe('completeCommand — sources', () => {
         } finally {
             if (previous === undefined) delete process.env.HOME;
             else process.env.HOME = previous;
+            if (previousProfile === undefined) delete process.env.USERPROFILE;
+            else process.env.USERPROFILE = previousProfile;
             await elsewhere.cleanup();
             await home.cleanup();
         }

@@ -439,13 +439,51 @@ export async function writeFileAtomic(filePath, contents, opts = {}) {
 
         if (opts.beforeRename) await opts.beforeRename();
 
-        await fs.rename(tmpPath, filePath);
+        await renameWithRetry(tmpPath, filePath);
         await syncDirectory(dir);
     } catch (err) {
         if (handle) await handle.close().catch(() => {});
         // Never leave debris behind — a stray .tmp in .idea/ would confuse the user.
         await fs.rm(tmpPath, { force: true }).catch(() => {});
         throw err;
+    }
+}
+
+/** Codes with which Windows refuses a rename onto a file another process has open right now. */
+const BUSY_RENAME_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/**
+ * rename(), riding out Windows' refusal to replace a file that is busy for a moment.
+ *
+ * On Windows a rename onto a file fails with EPERM/EACCES/EBUSY while another process has
+ * it open — a second `wsc -c` renaming its own temp file into place, a reader, an
+ * antivirus scan. It clears within milliseconds, so a few short retries are the answer
+ * (graceful-fs and write-file-atomic do the same). Elsewhere those codes mean a real
+ * refusal and are thrown at once. Bounded, so a file that stays locked still fails.
+ *
+ * @param {string} from
+ * @param {string} to
+ * @param {object} [opts]
+ * @param {(from: string, to: string) => Promise<void>} [opts.rename] - injected in tests
+ * @param {string} [opts.platform]
+ * @param {number} [opts.attempts]
+ * @param {number} [opts.delayMs] - wait before the n-th retry is n × delayMs
+ * @returns {Promise<void>}
+ */
+export async function renameWithRetry(from, to, opts = {}) {
+    const rename = opts.rename ?? fs.rename;
+    const platform = opts.platform ?? process.platform;
+    const attempts = opts.attempts ?? 10;
+    const delayMs = opts.delayMs ?? 20;
+
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await rename(from, to);
+        } catch (err) {
+            const busy = platform === 'win32' && BUSY_RENAME_CODES.has(/** @type {NodeJS.ErrnoException} */ (err).code ?? '');
+            if (!busy || attempt >= attempts) throw err;
+            await new Promise((resolve) => setTimeout(resolve, attempt * delayMs));
+        }
     }
 }
 

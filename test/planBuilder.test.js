@@ -26,6 +26,7 @@ import {
 } from '../src/exec/planBuilder.js';
 import { DEBUG_CONFIGURATION_TOOL, RUN_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL, TERMINAL_TOOL } from '../src/mcp/execute.js';
 import { buildLaunchPlan, normalizeRunConfigs } from '../src/resolve.js';
+import { skipWithoutPosixSh } from '../test-utils/shells.js';
 
 const require = createRequire(import.meta.url);
 /** The demo-app payload — 13 configurations, including two debug scripts. */
@@ -370,7 +371,7 @@ describe('buildExecutionPlan — the name of a Terminal tab', () => {
     });
 });
 
-describe('debugEnvPrefix — finding #3, an inherited NODE_OPTIONS', () => {
+describe('debugEnvPrefix — finding #3, an inherited NODE_OPTIONS', { skip: skipWithoutPosixSh }, () => {
     /**
      * Run a built prefix through a real POSIX shell and read the result back.
      *

@@ -151,7 +151,11 @@ describe('createPathLookup', () => {
         }
     });
 
-    test('a file without the executable bit is not found', async () => {
+    // Windows has no executable bit — fs.access(X_OK) succeeds for any file there — so the
+    // POSIX branch can only be exercised on a POSIX filesystem; the win32 branch has its own test.
+    test('a file without the executable bit is not found', {
+        skip: process.platform === 'win32' && 'Windows has no executable bit',
+    }, async () => {
         const { dir, cleanup } = await tmpDir();
         try {
             await fs.writeFile(path.join(dir, 'wt'), 'text', { mode: 0o644 });

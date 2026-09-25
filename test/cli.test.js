@@ -137,7 +137,8 @@ describe('runCli — project and preset', () => {
     test('--project on a missing directory exits 1 instead of looking empty', async () => {
         const h = fakeCliDeps();
         assert.equal(await runCli(['--project', '/no/such/place', 'web'], h.deps), 1);
-        assert.match(h.output(), /--project: no such directory: \/no\/such\/place/);
+        // Resolved the platform's way: D:\no\such\place on Windows.
+        assert.ok(h.output().includes(`--project: no such directory: ${path.resolve(h.deps.cwd, '/no/such/place')}`), h.output());
         assert.deepEqual(h.calls, [], 'the IDE must not be contacted for an invalid project');
     });
 

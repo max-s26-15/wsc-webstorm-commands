@@ -6,6 +6,7 @@ import { announceCustomCommands, customCommandLine, customCommandLines } from '.
 import { createLogger } from '../src/log.js';
 import { buildLaunchPlan } from '../src/resolve.js';
 import { fakeStream } from '../test-utils/capture.js';
+import { skipWithoutPosixSh } from '../test-utils/shells.js';
 
 const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
 const plan = buildLaunchPlan({ configs: [{ name: 'web' }], preset: [{ name: 'web', mode: 'run' }, seed] });
@@ -15,7 +16,7 @@ describe('customCommandLine', () => {
         assert.equal(customCommandLine(['npm i', 'echo "a b" | tr a-z A-Z']), 'npm i && echo "a b" | tr a-z A-Z');
     });
 
-    test('a failing command stops the chain — run through a real /bin/sh', () => {
+    test('a failing command stops the chain — run through a real /bin/sh', { skip: skipWithoutPosixSh }, () => {
         const chained = spawnSync('/bin/sh', ['-c', customCommandLine(['false', 'echo second'])], { encoding: 'utf8' });
         assert.equal(chained.status, 1, 'the chain ends with the failure of its first command');
         assert.equal(chained.stdout, '', 'the second command must not run');
@@ -26,7 +27,7 @@ describe('customCommandLine', () => {
         assert.equal(loose.stdout, 'second\n');
     });
 
-    test('a succeeding chain runs every command, in order', () => {
+    test('a succeeding chain runs every command, in order', { skip: skipWithoutPosixSh }, () => {
         const chained = spawnSync('/bin/sh', ['-c', customCommandLine(['echo one', 'echo two'])], { encoding: 'utf8' });
         assert.equal(chained.status, 0);
         assert.equal(chained.stdout, 'one\ntwo\n');
