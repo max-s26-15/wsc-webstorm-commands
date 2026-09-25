@@ -528,6 +528,18 @@ function presetEntryLabel(entry) {
 }
 
 /**
+ * The "which presets exist" half of an unknown-preset message — shared by the delete path
+ * and the launch path so the wording (and the empty-config case) cannot drift between them.
+ *
+ * @param {import('./presets/store.js').PresetConfig} config
+ * @returns {string}
+ */
+function unknownPresetHint(config) {
+    const known = listPresets(config);
+    return known.length > 0 ? `known presets: ${known.join(', ')}` : 'no presets configured yet';
+}
+
+/**
  * `--delete-preset <name>`: remove one preset from the preset file and stop.
  *
  * Contacts nothing — the IDE has no say in which presets exist — and asks nothing either:
@@ -548,9 +560,7 @@ function presetEntryLabel(entry) {
  */
 async function runDeletePreset({ projectRoot, config, name, log }) {
     if (!hasPreset(config, name)) {
-        const known = listPresets(config);
-        const hint = known.length > 0 ? `known presets: ${known.join(', ')}` : 'no presets configured yet';
-        throw new WscError(`unknown preset "${name}" (${hint})`);
+        throw new WscError(`unknown preset "${name}" (${unknownPresetHint(config)})`);
     }
 
     const result = deletePreset(config, name);
@@ -722,9 +732,7 @@ async function run(argv, deps) {
     const missingPresets = presetNames.filter((name) => !hasPreset(config, name));
 
     if (missingPresets.length > 0) {
-        const hint = knownPresets.length > 0
-            ? `known presets: ${knownPresets.join(', ')}`
-            : 'no presets configured yet';
+        const hint = unknownPresetHint(config);
 
         if (explicitPreset && !values.configure) {
             throw new WscError(`unknown preset "${missingPresets[0]}" (${hint})`);
