@@ -77,6 +77,21 @@ describe('findProjectRoot', () => {
         }
     });
 
+    test('a project reached through a symlink resolves to its real path', async () => {
+        // macOS's temp dir is /var/…, a symlink to /private/var/…; the IDE knows a project
+        // by its real path, so the root handed to it (projectPath) has to be that one.
+        const { dir, cleanup } = await tmpProject();
+        const { dir: links, cleanup: cleanupLinks } = await tmpDir();
+        try {
+            const link = path.join(links, 'linked-project');
+            await fs.symlink(dir, link, 'dir');
+            assert.equal(await findProjectRoot(path.join(link)), await fs.realpath(dir));
+        } finally {
+            await cleanupLinks();
+            await cleanup();
+        }
+    });
+
     test('returns null when no .idea/ exists up to the filesystem root', async () => {
         const { dir, cleanup } = await tmpDir();
         try {

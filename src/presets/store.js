@@ -97,7 +97,10 @@ export function emptyConfig() {
  * @returns {Promise<string | null>}
  */
 export async function findProjectRoot(startDir = process.cwd()) {
-    let dir = path.resolve(startDir);
+    // The real path, not the one typed: the IDE knows a project by its real path, and
+    // macOS's temp dir (/var → /private/var) alone is enough to hand it a name it has
+    // never heard of. Walking up from the real path also walks the real parents.
+    let dir = await fs.realpath(path.resolve(startDir)).catch(() => path.resolve(startDir));
 
     for (;;) {
         try {
