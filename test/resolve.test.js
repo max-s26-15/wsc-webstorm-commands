@@ -58,7 +58,7 @@ describe('normalizeRunConfigs', () => {
                     // Still a TypeError, so nothing that used to catch one stops working.
                     assert.ok(err instanceof TypeError);
                     assert.equal(err.name, 'RunConfigPayloadError');
-                    assert.match(err.message, /mcp:probe/);
+                    assert.match(err.message, /wsc-mcp-probe/);
                     return true;
                 },
             );
