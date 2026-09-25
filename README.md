@@ -214,6 +214,7 @@ api:terminal
 | `wsc test:watch:terminal` | that one configuration in an IDE Terminal tab, without a debugger (see [`:terminal`](#a-terminal-tab-for-one-entry-terminal)) |
 | `-c`, `--configure` | interactive screen for choosing what the preset holds |
 | `-l`, `--list` | print every run configuration the project has |
+| `--delete-preset <name>` | delete a preset from the project's preset file, without contacting the IDE (see [Deleting a preset](#deleting-a-preset)) |
 | `--preset <name> [<name> ...]` | use a different named preset, or launch several at once (`--preset a b`, or repeat the flag) |
 | `--target=run-window\|terminal` | native Run/Debug tabs (default) or IDE Terminal tabs |
 | `--dry-run` | print the exact calls without launching anything |
@@ -287,6 +288,47 @@ interactive screen that writes the file: a checkbox list of everything the IDE r
 the current preset pre-checked, followed by a run/debug/terminal question for each newly checked
 entry only, and a last step for adding a command of your own (see
 [Your own commands](#your-own-commands-no-run-configuration)).
+
+## Deleting a preset
+
+`wsc --delete-preset <name>` removes one preset from `.idea/webstorm-commands.json` and stops —
+it never contacts WebStorm, since which presets exist has nothing to do with the IDE. It prints
+what it deleted, so the deletion can be undone by hand from the output alone:
+
+```
+$ wsc --delete-preset old-one
+deleted preset "old-one" from /tmp/demo-app/.idea/webstorm-commands.json
+  - test:watch
+  - test:coverage:debug
+  - ⌘ seed db
+```
+
+Each line is the entry as you would type it back in: a plain name for the default `run` mode,
+`name:mode` otherwise, and `⌘ name` for a [custom command entry](#your-own-commands-no-run-configuration),
+which has no mode worth showing. An empty preset prints only the header line.
+
+`--delete-preset` accepts no other flag but `--project` — `--preset`, `--target`, `--dry-run`
+and the rest are refused with exit 2, the same way `--list` refuses them, rather than silently
+doing nothing:
+
+```
+$ wsc --delete-preset a --preset b
+error: --delete-preset edits the preset file, so --preset would be ignored
+```
+
+(followed by the usage text; exit code 2, and the IDE is never contacted.)
+
+Deleting the `defaultPreset` resets it to `"default"` rather than picking another surviving
+preset — guessing would make the next bare `wsc` launch something you never chose. If other
+presets are still left, that reset points at a preset which may not exist yet, so `wsc` warns
+about it immediately instead of waiting for the next bare `wsc` to fail on it:
+
+```
+$ wsc --delete-preset main
+deleted preset "main" from /tmp/demo-app-default/.idea/webstorm-commands.json
+  - test
+warn: "main" was the default preset; defaultPreset is now "default", which does not exist yet — run `wsc -c` to create it, or set defaultPreset in /tmp/demo-app-default/.idea/webstorm-commands.json
+```
 
 ## `--preset <name>`
 

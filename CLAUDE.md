@@ -19,6 +19,8 @@ both paths. The five-point acceptance checklist was run end to end against the l
 Since then: the user's own CLI commands in a preset (`commands` on an entry) — an entry with no run
 configuration behind it, launched as a named Terminal tab.
 Since then: Tab completion for zsh and bash (`wsc --completion <shell>`, `src/completion/`).
+Since then: `wsc --delete-preset <name>` — a fifth intent that edits `.idea/webstorm-commands.json`
+and never contacts the IDE.
 What is left is user-triggered: `/code-review` over the whole diff before the first version tag.
 
 ## Commands
@@ -58,8 +60,8 @@ exercises it.
   keep it that way so `src/cli.js` stays unit-testable without spawning a process. It has no static import at all,
   and `test/completionBoundary.test.js` pins that.
 - `src/cli.js` — argument parsing (`node:util.parseArgs`) and the `runCli(argv): Promise<number>` contract
-  every flag plugs into. Four intents live in it, and each one refuses the others' flags rather than
-  half-honouring a command line: a launch, `--configure`, `--list`, and `--completion`.
+  every flag plugs into. Five intents live in it, and each one refuses the others' flags rather than
+  half-honouring a command line: a launch, `--configure`, `--list`, `--completion`, and `--delete-preset`.
 - `src/log.js` — `createLogger()`: leveled logging (`WSC_LOG_LEVEL`), `NO_COLOR`/`FORCE_COLOR`/`TERM=dumb`
   aware. Diagnostics go to stderr, `out()` is the only thing that writes to stdout, so `wsc --list` (and a
   `--dry-run` plan) stays pipeable. `color` is decided from **stderr**'s TTY-ness, not stdout's.
@@ -373,6 +375,20 @@ exercises it.
   `--list` also branches **before** `readPresets()`: the catalogue has nothing to do with presets, and
   failing on a missing or hand-broken `webstorm-commands.json` would break `--list` in exactly the project
   that needs it most. Pinned by "does not depend on the preset file, which it never uses".
+- **`--delete-preset <name>` is a fifth intent that never contacts the IDE**, since which presets exist has
+  nothing to do with it: no `reachMcp()`, no `connectMcp`, no `--fallback`, no TTY requirement, no
+  confirmation prompt — it only reads and writes `.idea/webstorm-commands.json`. `DELETE_PRESET_IGNORED_FLAGS`
+  (`src/args.js`) is `Object.keys(OPTIONS)` minus `delete-preset`/`project`/`help`/`version`/`completion`,
+  rather than a spelled-out list, so a flag added later is refused by default instead of silently ignored.
+  A deleted `defaultPreset` resets to `DEFAULT_PRESET` ("default") and never to another surviving preset —
+  picking one would make the next bare `wsc` launch something the user never chose — and `log.warn`s about
+  it only when that reset default names nothing *and* other presets remain (a remaining preset literally
+  called `default` needs no warning, and an emptied project is simply unconfigured, not broken). Deleting
+  a preset called `default` that was itself the default hits the same two branches. `deletePreset()` in
+  `src/presets/store.js` follows the same `Object.prototype` house rule as every other preset write: lookups
+  go through `hasPreset()`, and the surviving preset map is rebuilt with `Object.fromEntries` rather than a
+  spread-then-`delete`, so a preset named `constructor` or `__proto__` deletes cleanly instead of touching
+  the prototype.
 - **Terminal commands are reconstructed from the IDE's naming convention**, because
   `get_run_configurations` reports only `name` and `description`. WebStorm names an npm configuration after
   its script, prefixed with the package.json directory when it is not the project root (`client > bundle:build`

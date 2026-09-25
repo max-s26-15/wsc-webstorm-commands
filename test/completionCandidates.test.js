@@ -91,6 +91,12 @@ describe('complete — flag values', () => {
         assert.deepEqual(at('--preset ').values, ['default', 'backend']);
     });
 
+    test('--delete-preset offers preset names, in both spellings', () => {
+        assert.deepEqual(at('--delete-preset ').values, ['default', 'backend']);
+        assert.deepEqual(at('--delete-preset b').values, ['backend']);
+        assert.deepEqual(at('--delete-preset=b').values, ['--delete-preset=backend']);
+    });
+
     test('--project hands the decision to the shell, and the = form offers nothing', () => {
         assert.deepEqual(at('--project '), { directive: 'dirs', values: [] });
         assert.deepEqual(at('--project=').directive, 'none');
@@ -129,6 +135,12 @@ describe('complete — what may follow', () => {
         assert.deepEqual(at('--list '), { directive: 'none', values: [] });
         assert.deepEqual(at('--completion zsh '), { directive: 'none', values: [] });
         assert.deepEqual(at('--completion=zsh '), { directive: 'none', values: [] });
+    });
+
+    test('--delete-preset takes no names once its value is typed, only flags', () => {
+        assert.deepEqual(at('--delete-preset backend '), { directive: 'none', values: [] });
+        assert.deepEqual(at('--delete-preset=backend '), { directive: 'none', values: [] });
+        assert.deepEqual(at('--delete-preset backend --pro').values, ['--project']);
     });
 
     test('--configure still takes --preset, so its value is completed', () => {

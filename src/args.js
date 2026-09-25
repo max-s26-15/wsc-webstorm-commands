@@ -33,6 +33,7 @@ export const OPTIONS = {
     'dry-run': { type: 'boolean' },
     fallback: { type: 'string' },
     completion: { type: 'string' },
+    'delete-preset': { type: 'string' },
 };
 
 /**
@@ -59,6 +60,22 @@ export const LAUNCH_ONLY_FLAGS = /** @type {const} */ (['target', 'debug-port', 
  * their command line did nothing.
  */
 export const LIST_IGNORED_FLAGS = /** @type {const} */ ([...LAUNCH_ONLY_FLAGS, 'preset']);
+
+/**
+ * Flags that mean nothing to `--delete-preset`.
+ *
+ * Every flag but --project: deleting a preset edits a file and contacts nothing, so there
+ * is no launch to steer, no IDE to wait for or fall back from, and no second preset to
+ * name. Derived from OPTIONS rather than spelled out, so a flag added later is refused
+ * here by default instead of silently ignored. --help and --version win before any intent
+ * is looked at, and --completion refuses every other flag itself, so none of the three is
+ * listed.
+ */
+export const DELETE_PRESET_IGNORED_FLAGS = Object.freeze(
+    Object.keys(OPTIONS).filter(
+        (flag) => !['delete-preset', 'project', 'help', 'version', 'completion'].includes(flag),
+    ),
+);
 
 /**
  * Which of `flags` the user actually passed.
@@ -161,6 +178,7 @@ export function parseRequests(tokens, opts = {}) {
  *   'dry-run'?: boolean,
  *   fallback?: string,
  *   completion?: string,
+ *   'delete-preset'?: string,
  * }} CliValues
  */
 

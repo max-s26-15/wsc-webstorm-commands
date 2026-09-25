@@ -60,7 +60,9 @@ function isIntent(word) {
         word === '-l' ||
         word === '--list' ||
         word === '--completion' ||
-        word.startsWith('--completion=')
+        word.startsWith('--completion=') ||
+        word === '--delete-preset' ||
+        word.startsWith('--delete-preset=')
     );
 }
 
@@ -83,7 +85,7 @@ function flagsMatching(partial) {
  */
 function valuesOf(flag, catalogue) {
     if (flag === 'project') return { directive: 'dirs', values: [] };
-    if (flag === 'preset') return offer([...catalogue.presets]);
+    if (flag === 'preset' || flag === 'delete-preset') return offer([...catalogue.presets]);
     const fixed = FLAG_VALUES.get(flag);
     return fixed === undefined ? none() : offer([...fixed]);
 }

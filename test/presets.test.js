@@ -12,6 +12,7 @@ import {
     PresetConfigError,
     SCHEMA_VERSION,
     configPath,
+    deletePreset,
     emptyConfig,
     findProjectRoot,
     getPreset,
@@ -666,6 +667,90 @@ describe('preset accessors', () => {
 
     test('listPresets returns names in insertion order', () => {
         assert.deepEqual(listPresets(SAMPLE), ['default', 'backend']);
+    });
+});
+
+describe('deletePreset', () => {
+    test('removes only the named preset and preserves the order of the rest', () => {
+        const three = setPreset(SAMPLE, 'frontend', [{ name: 'docs', mode: 'run' }]);
+        const { config } = deletePreset(three, 'backend');
+        assert.deepEqual(listPresets(config), ['default', 'frontend']);
+    });
+
+    test('does not mutate the input config', () => {
+        const before = JSON.parse(JSON.stringify(SAMPLE));
+        deletePreset(SAMPLE, 'backend');
+        assert.deepEqual(SAMPLE, before);
+    });
+
+    test('returns the entries the deleted preset held', () => {
+        const { entries } = deletePreset(SAMPLE, 'backend');
+        assert.deepEqual(entries, SAMPLE.presets.backend);
+    });
+
+    test('mutating the returned entries does not touch the input config', () => {
+        const { entries } = deletePreset(SAMPLE, 'backend');
+        entries.push({ name: 'injected', mode: 'run' });
+        assert.equal(SAMPLE.presets.backend.length, 1);
+    });
+
+    test('defaultReset is false, and defaultPreset untouched, when deleting a non-default preset', () => {
+        const { config, defaultReset } = deletePreset(SAMPLE, 'backend');
+        assert.equal(defaultReset, false);
+        assert.equal(config.defaultPreset, 'default');
+    });
+
+    test('defaultReset is true, and defaultPreset resets to DEFAULT_PRESET, when deleting the default preset', () => {
+        const { config, defaultReset } = deletePreset(SAMPLE, 'default');
+        assert.equal(defaultReset, true);
+        assert.equal(config.defaultPreset, DEFAULT_PRESET);
+    });
+
+    test('deleting a preset literally named "default" still resets defaultPreset to DEFAULT_PRESET', () => {
+        const config = setPreset(emptyConfig(), 'default', [{ name: 'web', mode: 'run' }]);
+        const { config: after, defaultReset } = deletePreset(config, 'default');
+        assert.equal(defaultReset, true);
+        assert.equal(after.defaultPreset, DEFAULT_PRESET);
+        assert.deepEqual(listPresets(after), []);
+    });
+
+    test('throws a plain Error for a preset name that does not exist', () => {
+        assert.throws(() => deletePreset(SAMPLE, 'nope'), (err) => err instanceof Error && !(err instanceof TypeError));
+    });
+
+    for (const name of ['constructor', 'toString', '__proto__']) {
+        test(`deletes a preset named "${name}" and round-trips the rest through serializeConfig`, () => {
+            const config = parseConfig(
+                JSON.stringify({ presets: { [name]: [{ name: 'api' }], real: [{ name: 'web' }] } }),
+            );
+
+            const { config: after, entries } = deletePreset(config, name);
+
+            assert.deepEqual(entries, [{ name: 'api', mode: 'run' }]);
+            assert.equal(hasPreset(after, name), false);
+            assert.deepEqual(listPresets(after), ['real']);
+            assert.equal(Object.getPrototypeOf(after.presets), Object.prototype);
+            assert.equal({}.name, undefined, 'Object.prototype must be untouched');
+
+            const reparsed = parseConfig(serializeConfig(after));
+            assert.deepEqual(listPresets(reparsed), ['real']);
+            assert.equal(hasPreset(reparsed, name), false);
+        });
+    }
+
+    test('unknown top-level keys survive a serializeConfig round-trip after a delete', () => {
+        const config = parseConfig(
+            JSON.stringify({
+                presets: { default: [{ name: 'web' }], backend: [{ name: 'mailer' }] },
+                futureField: 'kept',
+            }),
+        );
+
+        const { config: after } = deletePreset(config, 'backend');
+        const reparsed = parseConfig(serializeConfig(after));
+
+        assert.equal(reparsed.futureField, 'kept');
+        assert.deepEqual(listPresets(reparsed), ['default']);
     });
 });
 

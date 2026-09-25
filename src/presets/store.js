@@ -514,6 +514,38 @@ export function setPreset(config, name, entries) {
 }
 
 /**
+ * Delete a preset.
+ *
+ * The caller is expected to check `hasPreset()` first — presenting "no such preset" as a
+ * usage error is a CLI-layer decision, not this function's — so an unknown name throws a
+ * plain `Error` rather than returning quietly. `--delete-preset` is the only caller today.
+ *
+ * @param {PresetConfig} config
+ * @param {string} name
+ * @returns {{ config: PresetConfig, entries: PresetEntry[], defaultReset: boolean }} the
+ *   config with `name` removed, the entries it held, and whether `defaultPreset` pointed at
+ *   it (in which case the returned config's `defaultPreset` is reset to `DEFAULT_PRESET` —
+ *   never silently reassigned to another surviving preset)
+ * @throws {Error} if no preset named `name` exists
+ */
+export function deletePreset(config, name) {
+    if (!hasPreset(config, name)) {
+        throw new Error(`deletePreset: no such preset "${name}"`);
+    }
+
+    // fromEntries, not a spread-then-delete: the same __proto__ hazard setPreset avoids
+    // applies to removing a key as much as adding one.
+    const presets = Object.fromEntries(Object.entries(config.presets).filter(([k]) => k !== name));
+    const defaultReset = config.defaultPreset === name;
+
+    return {
+        config: { ...config, presets, ...(defaultReset ? { defaultPreset: DEFAULT_PRESET } : {}) },
+        entries: [...config.presets[name]],
+        defaultReset,
+    };
+}
+
+/**
  * @param {PresetConfig} config
  * @returns {string[]} preset names, in insertion order
  */
