@@ -10,32 +10,36 @@
  * Keep it after phase 2: MCP tool signatures change between IDE versions, and this
  * is the fastest way to see what a new WebStorm actually returns.
  *
+ * Installed from npm this is the `wsc-mcp-probe` command; in a clone, `npm run mcp:probe --`.
+ *
  * Usage:
- *   node scripts/mcp-probe.js                        # probe the current project
- *   node scripts/mcp-probe.js /path/to/project       # probe another open project
- *   node scripts/mcp-probe.js --raw > configs.json   # machine-readable payload
- *   node scripts/mcp-probe.js --save-fixture         # refresh the test fixture
- *   WSC_MCP_PORT=64542 node scripts/mcp-probe.js --verbose
+ *   wsc-mcp-probe                        # probe the current project
+ *   wsc-mcp-probe /path/to/project       # probe another open project
+ *   wsc-mcp-probe --raw > configs.json   # machine-readable payload
+ *   wsc-mcp-probe --save-fixture         # refresh the test fixture (a clone only)
+ *   WSC_MCP_PORT=64542 wsc-mcp-probe --verbose
  *
  * Progress goes to stderr, the payload to stdout, so `--raw` can be redirected.
  */
 import { parseArgs } from 'node:util';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { discoverPort } from '../src/mcp/discovery.js';
 import { AmbiguousProjectError, McpToolError, connectMcp } from '../src/mcp/client.js';
 import { createLogger } from '../src/log.js';
 
-const HELP = `mcp-probe — check that WebStorm's MCP Server is reachable
+const HELP = `wsc-mcp-probe — check that WebStorm's MCP Server is reachable
 
 Usage:
-  node scripts/mcp-probe.js [options] [projectPath]
+  wsc-mcp-probe [options] [projectPath]
 
 Options:
       --mcp-port <n>  MCP port (default: WSC_MCP_PORT, then a best-effort scan)
       --raw           print the raw get_run_configurations payload to stdout
-      --save-fixture  overwrite test/fixtures/run-configurations.json
+      --save-fixture  overwrite test/fixtures/run-configurations.json (in a clone only)
   -v, --verbose       show every MCP call
   -h, --help          show this help
 `;
@@ -63,8 +67,19 @@ const log = createLogger({ level: values.verbose ? 'debug' : 'info' });
 /** Marks a completed step. Progress lines go to stderr so --raw stays pipeable. */
 const step = (ok, text) => log.info(`${ok ? '✓' : '✗'} ${text}`);
 
-/** The project the IDE should act on. Defaults to cwd, exactly like the CLI will. */
-const projectPath = positionals[0] ?? process.cwd();
+// The fixture lives in test/, which an npm install does not ship: say so before contacting anything.
+if (values['save-fixture'] && !existsSync(path.dirname(FIXTURE_PATH))) {
+    process.stderr.write('wsc-mcp-probe: --save-fixture refreshes the test fixture, which only a clone of the repository has\n');
+    process.exit(2);
+}
+
+/**
+ * The project the IDE should act on. Defaults to cwd, exactly like the CLI will, and is the
+ * real path for the same reason: the IDE knows a project by its real path only (a symlinked
+ * one reads as "not an open project"), so the probe and wsc must send the same one.
+ */
+const typedPath = path.resolve(positionals[0] ?? process.cwd());
+const projectPath = await realpath(typedPath).catch(() => typedPath);
 
 // ── 1. Port ──────────────────────────────────────────────────────────────────
 const port = await discoverPort({ explicitPort: values['mcp-port'], log }).catch((err) => {
@@ -139,7 +154,7 @@ try {
                 : `not an open project: ${projectPath}`,
         );
         log.info('Re-run with one of:');
-        for (const project of err.projects) log.info(`  node scripts/mcp-probe.js ${project}`);
+        for (const project of err.projects) log.info(`  wsc-mcp-probe ${project}`);
         process.exit(1);
     }
     if (err instanceof McpToolError) {

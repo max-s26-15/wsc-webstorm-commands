@@ -9,8 +9,12 @@
   and refuses names and commands containing control characters, so the announcement cannot be forged or
   erased. Read it before the first `wsc` in a repository you did not write.
 - **`.idea/runConfigurations/*.xml` and `.idea/workspace.xml`** — used to rebuild command lines for Terminal
-  tabs and for `--fallback=terminal`. Every field is shell-quoted except a configuration's program
-  arguments, which are shell text by design (as in the IDE).
+  tabs (`:terminal`, `--target=terminal`, `:debug` without wsc Companion) and for `--fallback=terminal`.
+  Every field is shell-quoted except two that are shell text by design, as in the IDE: a configuration's
+  **program arguments** and a Node.js configuration's **Node parameters** (`node-parameters`). A
+  hand-edited XML can put commands in either, and unlike custom `commands` they are not announced before
+  the launch — `--dry-run` prints the exact command line. Read those two fields in a repository you did
+  not write, or launch in the IDE's Run window (the default), where the IDE builds the command itself.
 
 ## Reporting a vulnerability
 
