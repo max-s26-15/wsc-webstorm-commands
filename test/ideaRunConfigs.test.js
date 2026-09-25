@@ -15,6 +15,7 @@ import {
     readIdeaRunConfigs,
 } from '../src/fallback/ideaRunConfigs.js';
 import { tmpDir, tmpIdeaProject, tmpProject } from '../test-utils/tmp-dir.js';
+import { skipWithoutPosixSh } from '../test-utils/shells.js';
 
 const require = createRequire(import.meta.url);
 /** The 13 configurations the live IDE reports for the same project, over MCP. */
@@ -60,12 +61,13 @@ describe('parseRunConfigurations — the real workspace.xml', () => {
         assert.equal(web.description, 'npm');
         assert.deepEqual(web.scripts, ['dev']);
         assert.equal(web.command, 'run');
-        assert.equal(web.dir, path.join(ROOT, 'web'));
+        // Macros are substituted into the IDE's own text, so its '/' stays — on Windows too.
+        assert.equal(web.dir, `${ROOT}/web`);
     });
 
     test('expands $PROJECT_DIR$ and $USER_HOME$', () => {
         const client = byName('client > bundle:build', configs);
-        assert.equal(client.dir, path.join(ROOT, 'gateway/addon/client'));
+        assert.equal(client.dir, `${ROOT}/gateway/addon/client`);
 
         const web = byName('web', configs);
         assert.equal(web.interpreter, `${HOME}/.nvm/versions/node/v14.21.3/bin/node`);
@@ -82,8 +84,8 @@ describe('parseRunConfigurations — shapes that must not slip through', () => {
         assert.equal(repro.name, 'Repro: Stale Job Cleanup');
         assert.equal(repro.type, NODE_TYPE);
         assert.equal(repro.description, 'Node.js');
-        assert.equal(repro.dir, path.join(ROOT, 'api'));
-        assert.equal(repro.file, path.join(ROOT, 'api/scripts/reproduce-stale-job-cleanup.js'));
+        assert.equal(repro.dir, `${ROOT}/api`);
+        assert.equal(repro.file, `${ROOT}/api/scripts/reproduce-stale-job-cleanup.js`);
     });
 
     test('reads the Node parameters of a Node.js configuration', () => {
@@ -423,7 +425,7 @@ describe('buildFallbackCommand', () => {
     });
 });
 
-describe('buildFallbackCommand — a hostile .idea file cannot run a second command', () => {
+describe('buildFallbackCommand — a hostile .idea file cannot run a second command', { skip: skipWithoutPosixSh }, () => {
     // .idea/runConfigurations/*.xml is normally checked into the repository, so its
     // contents are as untrusted as any other file a clone brings with it. These pin the
     // behaviour rather than the spelling: the built line is handed to a real shell, and

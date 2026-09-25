@@ -60,6 +60,18 @@ export function lineBuffer(onLine) {
 }
 
 /**
+ * What to say when the shell every tab runs through is not installed at all — on Windows,
+ * no Git Bash: Windows Terminal is then not detected either (it needs bash too), so this
+ * pool is where the run lands.
+ *
+ * @returns {string}
+ */
+export function missingShellMessage() {
+    return `${SHELL} is not on PATH: wsc runs every command through ${SHELL}. ` +
+        'On Windows, install Git for Windows (Git Bash) and make sure bash is on PATH.';
+}
+
+/**
  * Run every command as a child process, tagging its output.
  *
  * @param {TabSpec[]} tabs
@@ -84,6 +96,7 @@ export async function runSingleTabPool(tabs, opts) {
     const children = [];
     let interrupted = false;
     let failures = 0;
+    let missingShellReported = false;
 
     /** @param {NodeJS.Signals} signal */
     const stopAll = (signal) => {
@@ -129,7 +142,13 @@ export async function runSingleTabPool(tabs, opts) {
             });
 
             child.on('error', (err) => {
-                log.error(`${tab.name}: ${err.message}`);
+                if (/** @type {NodeJS.ErrnoException} */ (err).code === 'ENOENT') {
+                    // The shell itself is missing: every tab fails the same way, so say it once, in words.
+                    if (!missingShellReported) log.error(missingShellMessage());
+                    missingShellReported = true;
+                } else {
+                    log.error(`${tab.name}: ${err.message}`);
+                }
                 failures++;
                 resolve(undefined);
             });

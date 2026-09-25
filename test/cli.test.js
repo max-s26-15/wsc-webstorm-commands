@@ -137,7 +137,8 @@ describe('runCli — project and preset', () => {
     test('--project on a missing directory exits 1 instead of looking empty', async () => {
         const h = fakeCliDeps();
         assert.equal(await runCli(['--project', '/no/such/place', 'web'], h.deps), 1);
-        assert.match(h.output(), /--project: no such directory: \/no\/such\/place/);
+        // Resolved the platform's way: D:\no\such\place on Windows.
+        assert.ok(h.output().includes(`--project: no such directory: ${path.resolve(h.deps.cwd, '/no/such/place')}`), h.output());
         assert.deepEqual(h.calls, [], 'the IDE must not be contacted for an invalid project');
     });
 
@@ -1736,5 +1737,50 @@ describe('runCli — --delete-preset', () => {
         const h = fakeCliDeps();
         assert.equal(await runCli(['--help'], h.deps), 0);
         assert.match(h.stdout(), /--delete-preset <n> delete a preset/);
+    });
+});
+
+describe('Windows: terminal launches need a POSIX shell', () => {
+    /**
+     * @param {string[]} argv
+     * @param {Record<string, string>} [env]
+     */
+    async function onWindows(argv, env = {}) {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const h = fakeCliDeps({ cwd: dir });
+            h.deps.platform = 'win32';
+            h.deps.env = { ...h.deps.env, ...env };
+            const code = await runCli(argv, h.deps);
+            return { code, output: h.output(), executed: h.executed };
+        } finally {
+            await cleanup();
+        }
+    }
+
+    test('a win32 launch that needs the terminal is refused before any tab opens', async () => {
+        const r = await onWindows(['web', 'api:terminal']);
+        assert.equal(r.code, 1);
+        assert.match(r.output, /cannot launch "api" on Windows/);
+        assert.equal(r.executed.length, 0);
+    });
+
+    test('--dry-run shows the refusal too', async () => {
+        const r = await onWindows(['--dry-run', 'api:terminal']);
+        assert.equal(r.code, 1);
+        assert.match(r.output, /cannot launch "api" on Windows/);
+        assert.equal(r.executed.length, 0);
+    });
+
+    test('a run-window launch on win32 goes ahead', async () => {
+        const r = await onWindows(['web']);
+        assert.equal(r.code, 0);
+        assert.equal(r.executed.length, 1);
+    });
+
+    test('WSC_POSIX_TERMINAL=1 lets it through', async () => {
+        const r = await onWindows(['api:terminal'], { WSC_POSIX_TERMINAL: '1' });
+        assert.equal(r.code, 0);
+        assert.equal(r.executed.length, 1);
     });
 });

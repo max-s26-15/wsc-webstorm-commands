@@ -55,6 +55,9 @@ export function fakeCliDeps(opts = {}) {
         stderr,
         env: { NO_COLOR: '1' },
         cwd: opts.cwd ?? process.cwd(),
+        // The plans these tests pin are POSIX command lines; on a Windows runner the real
+        // platform would refuse them (src/exec/terminalShell.js). Tests of that refusal set win32.
+        platform: 'linux',
 
         stdin: { isTTY: tty },
 

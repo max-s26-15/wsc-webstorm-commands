@@ -26,6 +26,7 @@ import {
     serializeConfig,
     setPreset,
     writeFileAtomic,
+    renameWithRetry,
     writePresets,
 } from '../src/presets/store.js';
 import { tmpArtifacts, tmpDir, tmpProject } from '../test-utils/tmp-dir.js';
@@ -451,7 +452,9 @@ describe('writePresets', () => {
         }
     });
 
-    test('preserves the existing file permissions', async () => {
+    test('preserves the existing file permissions', {
+        skip: process.platform === 'win32' && 'Windows has no POSIX permission bits',
+    }, async () => {
         const { dir, cleanup } = await tmpProject(JSON.stringify(SAMPLE));
         try {
             const file = configPath(dir);
@@ -473,6 +476,50 @@ describe('writePresets', () => {
         } finally {
             await cleanup();
         }
+    });
+});
+
+describe('renameWithRetry — Windows refuses a rename onto a file that is busy', () => {
+    /** A rename that fails with `code` for the first `failures` calls, then succeeds. */
+    const flaky = (code, failures) => {
+        const calls = [];
+        const rename = async (from, to) => {
+            calls.push([from, to]);
+            if (calls.length <= failures) throw Object.assign(new Error(`${code}: rename`), { code });
+        };
+        return { rename, calls };
+    };
+
+    test('a transient EPERM on Windows is retried until the rename goes through', async () => {
+        const { rename, calls } = flaky('EPERM', 2);
+        await renameWithRetry('a.tmp', 'a', { rename, platform: 'win32', delayMs: 0 });
+        assert.equal(calls.length, 3);
+    });
+
+    test('EACCES and EBUSY are the same kind of busy', async () => {
+        for (const code of ['EACCES', 'EBUSY']) {
+            const { rename, calls } = flaky(code, 1);
+            await renameWithRetry('a.tmp', 'a', { rename, platform: 'win32', delayMs: 0 });
+            assert.equal(calls.length, 2, code);
+        }
+    });
+
+    test('it gives up after a bounded number of attempts, with the last error', async () => {
+        const { rename, calls } = flaky('EPERM', Infinity);
+        await assert.rejects(renameWithRetry('a.tmp', 'a', { rename, platform: 'win32', delayMs: 0, attempts: 4 }), { code: 'EPERM' });
+        assert.equal(calls.length, 4);
+    });
+
+    test('elsewhere an EPERM is a real refusal and is not retried', async () => {
+        const { rename, calls } = flaky('EPERM', 1);
+        await assert.rejects(renameWithRetry('a.tmp', 'a', { rename, platform: 'linux', delayMs: 0 }), { code: 'EPERM' });
+        assert.equal(calls.length, 1);
+    });
+
+    test('an error that is not about a busy file is not retried on Windows either', async () => {
+        const { rename, calls } = flaky('ENOENT', 1);
+        await assert.rejects(renameWithRetry('a.tmp', 'a', { rename, platform: 'win32', delayMs: 0 }), { code: 'ENOENT' });
+        assert.equal(calls.length, 1);
     });
 });
 

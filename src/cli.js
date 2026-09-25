@@ -33,6 +33,7 @@ import {
 import { announceCustomCommands } from './exec/customCommands.js';
 import { guessedCommandNote, ideaCommandResolver } from './exec/ideaCommands.js';
 import { warnBusyDebugPorts } from './exec/inspectorPorts.js';
+import { assertPosixTerminal } from './exec/terminalShell.js';
 import { readIdeaRunConfigs } from './fallback/ideaRunConfigs.js';
 import { runTerminalFallback } from './fallback/terminalFallback.js';
 import { LIST_WITHOUT_IDE_LABEL, listFromDisk, listFromIde } from './list.js';
@@ -134,6 +135,7 @@ message goes to stderr, so \`wsc --list | grep dev\` sees configuration names an
  * @property {NodeJS.WriteStream} [stderr]
  * @property {NodeJS.ProcessEnv} [env]
  * @property {string} [cwd]
+ * @property {string} [platform] - process.platform unless a test says otherwise
  * @property {typeof discoverPort} [discoverPort]
  * @property {typeof connectMcp} [connectMcp]
  * @property {typeof executePlan} [executePlan]
@@ -360,6 +362,8 @@ const KNOWN_ERRORS = new Set([
     // tool signatures changing between WebStorm versions). It is a TypeError subclass, and
     // a bare TypeError reads as a bug in wsc, so it was rethrown as a stack trace.
     'RunConfigPayloadError',
+    // win32 with a plan that types POSIX shell into the IDE terminal (src/exec/terminalShell.js).
+    'PosixTerminalRequiredError',
     // The SDK's own class ("MCP error -32000: Connection closed", "-32001: Request timed
     // out"). Before phase 6 the only call was get_run_configurations and this was close to
     // unreachable; a launch makes it routine, and runExecutionPlan deliberately rethrows it.
@@ -845,6 +849,10 @@ async function run(argv, deps) {
         // Built here rather than inside the seam so that it is validated on the --dry-run
         // path too, and so an unlaunchable entry is reported before the first tab opens.
         const calls = buildExecutionPlan({ plan, target, debugPortBase, debugTool, terminalTool, commandFor });
+
+        // Before the --dry-run guard and before the first call: a refused plan starts
+        // nothing, and --dry-run shows the refusal a real launch would hit.
+        assertPosixTerminal(calls, { platform: deps.platform ?? process.platform, env });
 
         // One port per debug entry counts upwards, so a high --debug-port can run out of
         // range. Reported as the usage error it is, before anything starts.
