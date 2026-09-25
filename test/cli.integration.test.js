@@ -294,7 +294,7 @@ describe('flag table — -l/--list', () => {
         // project it is asking about — exactly as a launch does.
         const [connect] = result.calls;
         assert.equal(connect.type, 'connect');
-        assert.equal(connect.projectPath, result.dir);
+        assert.equal(connect.projectPath, result.root);
     });
 
     test('the MCP session stays open until the listing has been read', async () => {
