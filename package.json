@@ -1,13 +1,36 @@
 {
   "name": "webstorm-commands",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Launch a set of WebStorm run configurations at once, each in its own Run/Debug or Terminal tab, over the IDE's MCP Server",
+  "keywords": [
+    "webstorm",
+    "jetbrains",
+    "mcp",
+    "run-configurations",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Max Soltys",
+  "homepage": "https://github.com/max-s26-15/wsc-webstorm-commands#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/max-s26-15/wsc-webstorm-commands.git"
+  },
+  "bugs": {
+    "url": "https://github.com/max-s26-15/wsc-webstorm-commands/issues"
+  },
   "type": "module",
   "bin": {
-    "wsc": "./bin/wsc.js"
+    "wsc": "./bin/wsc.js",
+    "wsc-mcp-probe": "./scripts/mcp-probe.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/mcp-probe.js"
+  ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "test": "node --test",
@@ -16,9 +39,8 @@
     "test:coverage": "node --test --experimental-test-coverage",
     "mcp:probe": "node scripts/mcp-probe.js"
   },
-  "private": true,
   "dependencies": {
-    "@inquirer/prompts": "^7.10.1",
+    "@inquirer/prompts": "^8.7.2",
     "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {

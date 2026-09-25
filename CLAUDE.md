@@ -629,13 +629,9 @@ exercises it.
 
 ## Notes for future phases
 
-- Both planned runtime dependencies are now installed: `@modelcontextprotocol/sdk` and `@inquirer/prompts`.
-  **`@inquirer/prompts` is pinned to `^7`** — v8 requires Node `>=20.17`, which would break `engines.node:
-  ">=18"`. Bump the pin only together with `engines.node`.
+- Both runtime dependencies are installed: `@modelcontextprotocol/sdk` and `@inquirer/prompts` (`^8`).
+  `engines.node` is `>=22` — Node 18 and 20 were end-of-life before the first public release.
 - Beware `@` inside a JSDoc `@param` description: `defaults to @inquirer/prompts` is parsed as a new JSDoc
   tag and silently truncates the list of nested `opts.*` params (it cost a round of confusing TS8032 errors
   in `src/ui/configure.js`). `node:util.parseArgs` and `node:test` are used instead of
   `commander`/`yargs`/a third-party test runner — see "Довідник · Залежності" in the plan for the reasoning.
-- `package.json`'s `engines.node` is `>=18`. Avoid Node syntax that needs a newer minor/patch than that
-  (e.g. `import ... with { type: 'json' }` requires Node ≥18.20/20.10 — `src/cli.js` reads `package.json`
-  via `createRequire` instead, specifically to stay compatible with `>=18.0`).

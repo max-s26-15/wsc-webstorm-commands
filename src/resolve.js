@@ -73,7 +73,7 @@ export class RunConfigPayloadError extends TypeError {
         super(
             `the IDE answered get_run_configurations with something wsc does not understand: ${detail}.\n` +
                 '  This usually means the MCP tool changed shape in a newer WebStorm. Run\n' +
-                '  `npm run mcp:probe` against this IDE to see what it actually returns.',
+                '  `wsc-mcp-probe` against this IDE to see what it actually returns.',
         );
         this.name = 'RunConfigPayloadError';
         this.detail = detail;

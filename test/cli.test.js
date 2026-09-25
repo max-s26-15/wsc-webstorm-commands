@@ -663,7 +663,7 @@ describe('runCli — MCP failures', () => {
             const h = fakeCliDeps({ cwd: dir, configurations: 'Everything is fine.' });
             assert.equal(await runCli(['web'], h.deps), 1);
             assert.match(h.output(), /does not understand/);
-            assert.match(h.output(), /mcp:probe/);
+            assert.match(h.output(), /wsc-mcp-probe/);
             assert.doesNotMatch(h.output(), /at normalizeRunConfigs/);
         } finally {
             await cleanup();
