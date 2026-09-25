@@ -1555,3 +1555,160 @@ describe('runCli — a real Terminal tab through the wsc IDE plugin', () => {
         assert.deepEqual(calls.map((c) => c.name), [TAB_TOOL, 'debug_run_configuration']);
     });
 });
+
+describe('runCli — --delete-preset', () => {
+    const CONFIG = JSON.stringify({
+        version: 1,
+        defaultPreset: 'default',
+        presets: {
+            default: [{ name: 'api' }],
+            'old-one': [
+                { name: 'web' },
+                { name: 'api', mode: 'debug' },
+                { name: 'seed db', mode: 'terminal', commands: ['npm run seed'] },
+            ],
+        },
+        extra: { kept: true },
+    });
+
+    /**
+     * Run the CLI in a throwaway project and hand back the preset file as it was left.
+     *
+     * @param {string[]} argv
+     * @param {object} [opts]
+     * @param {string} [opts.config]
+     * @param {(dir: string) => string[]} [opts.argv] - build argv from the project dir
+     * @param {string} [opts.cwd]
+     */
+    async function deleting(argv, opts = {}) {
+        const { dir, cleanup } = await tmpProject(opts.config ?? CONFIG);
+        try {
+            const h = fakeCliDeps({ cwd: opts.cwd ?? dir });
+            // Any contact with the IDE fails the run loudly, instead of passing quietly.
+            h.deps.discoverPort = async () => { throw new Error('discoverPort must not be called'); };
+            h.deps.connectMcp = async () => { throw new Error('connectMcp must not be called'); };
+            const code = await runCli(opts.argv ? opts.argv(dir) : argv, h.deps);
+            const file = JSON.parse(await readFile(path.join(dir, '.idea', 'webstorm-commands.json'), 'utf8'));
+            return { code, file, dir, stdout: h.stdout(), stderr: h.stderr(), output: h.output() };
+        } finally {
+            await cleanup();
+        }
+    }
+
+    test('deletes the preset, keeps the rest of the file, and never contacts the IDE', async () => {
+        const result = await deleting(['--delete-preset', 'old-one']);
+
+        assert.equal(result.code, 0);
+        assert.equal(Object.hasOwn(result.file.presets, 'old-one'), false);
+        assert.deepEqual(result.file.presets.default, [{ name: 'api', mode: 'run' }]);
+        assert.deepEqual(result.file.extra, { kept: true }, 'unknown top-level keys survive');
+        assert.equal(result.file.defaultPreset, 'default');
+        assert.equal(result.stdout, '', 'every message goes to stderr');
+    });
+
+    test('lists what the preset held, one label per entry', async () => {
+        const { stderr } = await deleting(['--delete-preset', 'old-one']);
+        assert.match(stderr, /deleted preset "old-one" from .*webstorm-commands\.json/);
+        assert.match(stderr, /\n {2}- web\n {2}- api:debug\n {2}- ⌘ seed db\n/);
+    });
+
+    test('an empty preset prints only the header line', async () => {
+        const config = JSON.stringify({ presets: { a: [], b: [{ name: 'web' }] } });
+        const { code, stderr } = await deleting(['--delete-preset', 'a'], { config });
+        assert.equal(code, 0);
+        assert.doesNotMatch(stderr, / {2}- /);
+    });
+
+    test('an unknown preset exits 1 and names the known ones', async () => {
+        const result = await deleting(['--delete-preset', 'nope']);
+        assert.equal(result.code, 1);
+        assert.match(result.output, /unknown preset "nope" \(known presets: default, old-one\)/);
+        assert.ok(Object.hasOwn(result.file.presets, 'old-one'), 'nothing was written');
+    });
+
+    test('with no presets at all, says so', async () => {
+        const result = await deleting(['--delete-preset', 'x'], { config: JSON.stringify({ presets: {} }) });
+        assert.equal(result.code, 1);
+        assert.match(result.output, /unknown preset "x" \(no presets configured yet\)/);
+    });
+
+    test('an empty name counts as passed, and is just an unknown preset', async () => {
+        const result = await deleting(['--delete-preset', '']);
+        assert.equal(result.code, 1);
+        assert.match(result.output, /unknown preset ""/);
+    });
+
+    test('a name that collides with Object.prototype is an unknown preset, not a crash', async () => {
+        for (const name of ['constructor', 'toString', '__proto__']) {
+            const result = await deleting(['--delete-preset', name]);
+            assert.equal(result.code, 1, name);
+            assert.match(result.output, /unknown preset/);
+        }
+    });
+
+    test('deleting the default while others remain resets it, and warns', async () => {
+        const config = JSON.stringify({ defaultPreset: 'main', presets: { main: [{ name: 'web' }], other: [] } });
+        const result = await deleting(['--delete-preset', 'main'], { config });
+
+        assert.equal(result.code, 0);
+        assert.equal(result.file.defaultPreset, 'default');
+        assert.deepEqual(Object.keys(result.file.presets), ['other']);
+        assert.match(result.stderr, /"main" was the default preset/);
+        assert.match(result.stderr, /wsc -c/);
+        assert.match(result.stderr, /webstorm-commands\.json/);
+    });
+
+    test('deleting the default when it is the last preset does not warn', async () => {
+        const config = JSON.stringify({ defaultPreset: 'main', presets: { main: [{ name: 'web' }] } });
+        const result = await deleting(['--delete-preset', 'main'], { config });
+
+        assert.equal(result.code, 0);
+        assert.equal(result.file.defaultPreset, 'default');
+        assert.deepEqual(result.file.presets, {});
+        assert.doesNotMatch(result.stderr, /wsc -c/);
+    });
+
+    test('deleting a preset called "default" that is the default, with others left, warns', async () => {
+        const result = await deleting(['--delete-preset', 'default']);
+        assert.equal(result.code, 0);
+        assert.equal(result.file.defaultPreset, 'default');
+        assert.match(result.stderr, /wsc -c/);
+    });
+
+    test('--project is honoured', async () => {
+        const result = await deleting([], { cwd: '/', argv: (dir) => ['--project', dir, '--delete-preset', 'old-one'] });
+        assert.equal(result.code, 0);
+        assert.equal(Object.hasOwn(result.file.presets, 'old-one'), false);
+    });
+
+    test('refuses configuration names and every other flag, before touching the file', async () => {
+        for (const extra of [
+            ['web'],
+            ['--preset', 'default'],
+            ['--configure'],
+            ['-c'],
+            ['--list'],
+            ['--dry-run'],
+            ['--fallback=retry'],
+            ['--mcp-port', '1234'],
+            ['--target', 'terminal'],
+            ['--debug-port', '9300'],
+        ]) {
+            const result = await deleting(['--delete-preset', 'old-one', ...extra]);
+            assert.equal(result.code, 2, extra.join(' '));
+            assert.ok(Object.hasOwn(result.file.presets, 'old-one'), `${extra.join(' ')}: nothing deleted`);
+        }
+    });
+
+    test('the refusal names the offending flag', async () => {
+        const result = await deleting(['--delete-preset', 'old-one', '--dry-run', '--mcp-port', '1']);
+        assert.equal(result.code, 2);
+        assert.match(result.output, /--delete-preset edits the preset file, so --mcp-port and --dry-run would be ignored/);
+    });
+
+    test('--help lists it', async () => {
+        const h = fakeCliDeps();
+        assert.equal(await runCli(['--help'], h.deps), 0);
+        assert.match(h.stdout(), /--delete-preset <n> delete a preset/);
+    });
+});

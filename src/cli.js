@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import {
+    DELETE_PRESET_IGNORED_FLAGS,
     LAUNCH_ONLY_FLAGS,
     LIST_IGNORED_FLAGS,
     UsageError,
@@ -39,14 +40,19 @@ import { createLogger } from './log.js';
 import { connectMcp } from './mcp/client.js';
 import { discoverPort, parsePort } from './mcp/discovery.js';
 import { DEBUG_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL, runExecutionPlan } from './mcp/execute.js';
+import { DEFAULT_MODE } from './modes.js';
 import {
     CONFIG_DIR,
     PresetConfigError,
     configPath,
+    deletePreset,
     findProjectRoot,
     getPreset,
     hasPreset,
+    isCustomEntry,
+    listPresets,
     readPresets,
+    writePresets,
 } from './presets/store.js';
 import { buildLaunchPlan, formatPlan, normalizeRunConfigs } from './resolve.js';
 import { runConfigure } from './ui/configure.js';
@@ -72,20 +78,21 @@ Usage:
   wsc [options] [configuration[:run|:debug|:terminal] ...]
 
 Options:
-  -c, --configure       pick which configurations launch by default, and how
-  -l, --list            print every run configuration the project has, and stop
-      --preset <name>   preset to configure or launch (default: the config's defaultPreset);
-                        to launch several, list them: --preset a b, or repeat the flag
-      --project <path>  project root (default: nearest directory with .idea/)
-      --mcp-port <n>    MCP Server port (default: WSC_MCP_PORT, then a scan)
-      --target <where>  run-window (default) — native Run/Debug tabs — or terminal
-      --debug-port <n>  first inspector port for :debug entries (default: ${DEBUG_PORT_BASE})
-      --dry-run         print what would be launched, without launching it
-      --fallback <how>  when the IDE cannot be reached: retry (poll for it) or terminal
-                        (launch without it). Default: ask, if there is a terminal to ask in
-      --completion <sh> print a Tab-completion script (zsh or bash), and stop
-  -h, --help            show this help
-  -v, --version         show version
+  -c, --configure         pick which configurations launch by default, and how
+  -l, --list              print every run configuration the project has, and stop
+      --preset <name>     preset to configure or launch (default: the config's defaultPreset);
+                          to launch several, list them: --preset a b, or repeat the flag
+      --project <path>    project root (default: nearest directory with .idea/)
+      --mcp-port <n>      MCP Server port (default: WSC_MCP_PORT, then a scan)
+      --target <where>    run-window (default) — native Run/Debug tabs — or terminal
+      --debug-port <n>    first inspector port for :debug entries (default: ${DEBUG_PORT_BASE})
+      --dry-run           print what would be launched, without launching it
+      --fallback <how>    when the IDE cannot be reached: retry (poll for it) or terminal
+                          (launch without it). Default: ask, if there is a terminal to ask in
+      --completion <sh>   print a Tab-completion script (zsh or bash), and stop
+      --delete-preset <n> delete a preset from the project's preset file
+  -h, --help              show this help
+  -v, --version           show version
 
 Examples:
   wsc                                 launch the default preset
@@ -95,6 +102,7 @@ Examples:
   wsc web:terminal api                web in a Terminal tab, api in the Run window
   wsc --target=terminal web           launch everything in Terminal tabs instead
   wsc -c                              edit the default preset interactively
+  wsc --delete-preset old-one         delete the "old-one" preset, without contacting the IDE
   wsc --fallback=retry web            wait for WebStorm to come up, then launch
   wsc --fallback=terminal web         launch in OS terminal tabs, without WebStorm
   source <(wsc --completion zsh)      in ~/.zshrc: Tab completes flags, presets and configurations
@@ -504,6 +512,63 @@ async function runList({ projectRoot, values, fallback, deps }) {
 }
 
 /**
+ * How a preset entry is shown in `--delete-preset`'s summary: `web`, `api:debug`, `⌘ seed db`.
+ *
+ * The `name:mode` spelling is the one the command line takes, so a deleted entry can be
+ * typed back in as it reads; the default mode is left off, as it is when typed. A custom
+ * command has no mode worth showing (it is always a Terminal tab) and cannot be named on
+ * the command line at all, hence the ⌘ the --configure screen marks it with.
+ *
+ * @param {import('./presets/store.js').PresetEntry} entry
+ * @returns {string}
+ */
+function presetEntryLabel(entry) {
+    if (isCustomEntry(entry)) return `⌘ ${entry.name}`;
+    return entry.mode === DEFAULT_MODE ? entry.name : `${entry.name}:${entry.mode}`;
+}
+
+/**
+ * `--delete-preset <name>`: remove one preset from the preset file and stop.
+ *
+ * Contacts nothing — the IDE has no say in which presets exist — and asks nothing either:
+ * the entries it held are printed afterwards, so the deletion can be undone by hand from
+ * the output alone.
+ *
+ * A deleted default is reset to DEFAULT_PRESET, never moved to another surviving preset:
+ * guessing which one the user meant would make the next bare `wsc` launch something they
+ * never chose. With others left, that reset points at a preset which does not exist, and
+ * the next bare `wsc` would stop on it — so it is said now, while the cause is on screen.
+ *
+ * @param {object} ctx
+ * @param {string} ctx.projectRoot
+ * @param {import('./presets/store.js').PresetConfig} ctx.config
+ * @param {string} ctx.name
+ * @param {ReturnType<typeof createLogger>} ctx.log
+ * @returns {Promise<number>} exit code
+ */
+async function runDeletePreset({ projectRoot, config, name, log }) {
+    if (!hasPreset(config, name)) {
+        const known = listPresets(config);
+        const hint = known.length > 0 ? `known presets: ${known.join(', ')}` : 'no presets configured yet';
+        throw new WscError(`unknown preset "${name}" (${hint})`);
+    }
+
+    const result = deletePreset(config, name);
+    const filePath = await writePresets(projectRoot, result.config);
+
+    log.info(`deleted preset "${name}" from ${filePath}`);
+    for (const entry of result.entries) log.info(`  - ${presetEntryLabel(entry)}`);
+
+    if (result.defaultReset && listPresets(result.config).length > 0) {
+        log.warn(
+            `"${name}" was the default preset; defaultPreset is now "${result.config.defaultPreset}", ` +
+                `which does not exist yet — run \`wsc -c\` to create it, or set defaultPreset in ${filePath}`,
+        );
+    }
+    return 0;
+}
+
+/**
  * @param {string[]} argv
  * @param {RunDeps} deps
  * @returns {Promise<number>}
@@ -539,6 +604,24 @@ async function run(argv, deps) {
         }
         stdout.write(completionScript(shell));
         return 0;
+    }
+
+    // --delete-preset is a fifth intent, and edits one file without the IDE, so the only
+    // other flag that means anything to it is --project. Like every other intent it refuses
+    // what it would otherwise drop, before anything is read: `wsc --delete-preset a --list`
+    // that deleted `a` and printed nothing would look like half a success.
+    const deleting = Object.hasOwn(values, 'delete-preset');
+    if (deleting) {
+        if (typed.length > 0) {
+            throw new UsageError('--delete-preset takes no configuration names: it deletes one preset');
+        }
+        const ignored = passedFlags(values, DELETE_PRESET_IGNORED_FLAGS);
+        if (ignored.length > 0) {
+            throw new UsageError(
+                `--delete-preset edits the preset file, so ${ignored.map((flag) => `--${flag}`).join(' and ')} ` +
+                    'would be ignored',
+            );
+        }
     }
 
     // Editing a preset and naming configurations to launch are different intents;
@@ -613,6 +696,13 @@ async function run(argv, deps) {
     if (values.list) return await runList({ projectRoot, values, fallback, deps });
 
     const config = await readPresets(projectRoot);
+
+    // Ahead of everything below, which is about the launch: an unknown --preset, a broken
+    // defaultPreset or an unreachable IDE has nothing to do with deleting a preset — and a
+    // broken defaultPreset may be exactly the preset being deleted.
+    if (deleting) {
+        return await runDeletePreset({ projectRoot, config, name: values['delete-preset'] ?? '', log });
+    }
     // `--preset a b` and `--preset a --preset b` name several presets, launched together as
     // if they were one: entries in the order given, and a configuration in more than one
     // keeps its first position with the last mode — the rule buildLaunchPlan() already has

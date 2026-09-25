@@ -191,6 +191,55 @@ describe('flag table — --completion', () => {
     });
 });
 
+// ── --delete-preset ──────────────────────────────────────────────────────────
+describe('flag table — --delete-preset', () => {
+    test('deletes the preset, lists what it held on stderr, and contacts nothing', async () => {
+        const config = withPresets({
+            default: [{ name: 'api' }],
+            'old-one': [
+                { name: 'web' },
+                { name: 'api', mode: 'debug' },
+                { name: 'seed db', mode: 'terminal', commands: ['npm run seed'] },
+            ],
+        });
+        const result = await wsc(['--delete-preset', 'old-one'], { config });
+
+        assert.equal(result.code, 0);
+        assert.equal(result.stdout, '');
+        assert.equal(
+            result.stderr,
+            `deleted preset "old-one" from ${result.dir}/.idea/webstorm-commands.json\n` +
+                '  - web\n' +
+                '  - api:debug\n' +
+                '  - ⌘ seed db\n',
+        );
+        assert.deepEqual(result.calls, []);
+        assert.deepEqual(result.executed, []);
+    });
+
+    test('deleting the default while others remain says what the default is now', async () => {
+        const config = withPresets({ main: [{ name: 'web' }], other: [] }, 'main');
+        const result = await wsc(['--delete-preset', 'main'], { config });
+        const file = `${result.dir}/.idea/webstorm-commands.json`;
+
+        assert.equal(result.code, 0);
+        assert.equal(
+            result.stderr,
+            `deleted preset "main" from ${file}\n` +
+                '  - web\n' +
+                'warn: "main" was the default preset; defaultPreset is now "default", which does not exist yet — ' +
+                `run \`wsc -c\` to create it, or set defaultPreset in ${file}\n`,
+        );
+    });
+
+    test('refuses anything but --project, with exit 2', async () => {
+        const result = await wsc(['--delete-preset', 'a', '--preset', 'b']);
+
+        assert.equal(result.code, 2);
+        assert.match(result.output, /--delete-preset edits the preset file, so --preset would be ignored/);
+    });
+});
+
 // ── -l, --list ───────────────────────────────────────────────────────────────
 describe('flag table — -l/--list', () => {
     test('prints every configuration the IDE reports, one per line, on stdout', async () => {
