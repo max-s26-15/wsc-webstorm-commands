@@ -20,6 +20,7 @@ import {
     guessedCommands,
     needsTerminalCommands,
     PIPED_TERMINAL_NOTE,
+    DEBUG_PLUGIN_HINT,
     shellQuote,
     splitNpmConfigName,
     usesPipedTerminal,
@@ -630,6 +631,9 @@ describe('usesPipedTerminal', () => {
     test('the warning names what goes missing and where to get a real tab', () => {
         assert.match(PIPED_TERMINAL_NOTE, /not a real terminal/);
         assert.match(PIPED_TERMINAL_NOTE, /Ctrl-C/);
-        assert.match(PIPED_TERMINAL_NOTE, /wsc IDE plugin/);
+        assert.match(PIPED_TERMINAL_NOTE, /wsc Companion/);
+        assert.match(DEBUG_PLUGIN_HINT, /wsc Companion/);
+        // An npm install has no repository checkout to read a README in.
+        assert.doesNotMatch(`${DEBUG_PLUGIN_HINT}\n${PIPED_TERMINAL_NOTE}`, /ide-plugin\/README/);
     });
 });

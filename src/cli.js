@@ -108,7 +108,7 @@ Examples:
   wsc --fallback=terminal web         launch in OS terminal tabs, without WebStorm
   source <(wsc --completion zsh)      in ~/.zshrc: Tab completes flags, presets and configurations
 
-:debug opens a real Debug tab when the wsc IDE plugin is installed (see ide-plugin/README.md).
+:debug opens a real Debug tab when wsc Companion is installed (Settings → Plugins → Marketplace).
 Without it the IDE's MCP API has no debug parameter, so the command runs in a Terminal tab
 rebuilt with --inspect-brk, and each :debug entry gets its own inspector port, counting up
 from ${DEBUG_PORT_BASE} — attach WebStorm to the port wsc prints for it. --target=terminal
