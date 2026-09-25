@@ -9,6 +9,8 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
 
 import { runCli } from '../src/cli.js';
 import { BASH_SCRIPT, ZSH_SCRIPT } from '../src/completion/scripts.js';
@@ -37,6 +39,8 @@ async function wsc(argv, opts = {}) {
         return {
             code,
             dir: project.dir,
+            // The project as wsc names it — its real path (macOS's temp dir is a symlink).
+            root: await realpath(project.dir),
             stdout: h.stdout(),
             stderr: h.stderr(),
             output: h.output(),
@@ -192,6 +196,13 @@ describe('flag table — --completion', () => {
 });
 
 // ── --delete-preset ──────────────────────────────────────────────────────────
+/**
+ * The preset file as wsc names it: under the project's real path, with the platform's separators.
+ *
+ * @param {{ root: string }} result
+ */
+const presetFile = (result) => path.join(result.root, '.idea', 'webstorm-commands.json');
+
 describe('flag table — --delete-preset', () => {
     test('deletes the preset, lists what it held on stderr, and contacts nothing', async () => {
         const config = withPresets({
@@ -208,7 +219,7 @@ describe('flag table — --delete-preset', () => {
         assert.equal(result.stdout, '');
         assert.equal(
             result.stderr,
-            `deleted preset "old-one" from ${result.dir}/.idea/webstorm-commands.json\n` +
+            `deleted preset "old-one" from ${presetFile(result)}\n` +
                 '  - web\n' +
                 '  - api:debug\n' +
                 '  - ⌘ seed db\n',
@@ -220,7 +231,7 @@ describe('flag table — --delete-preset', () => {
     test('deleting the default while others remain says what the default is now', async () => {
         const config = withPresets({ main: [{ name: 'web' }], other: [] }, 'main');
         const result = await wsc(['--delete-preset', 'main'], { config });
-        const file = `${result.dir}/.idea/webstorm-commands.json`;
+        const file = presetFile(result);
 
         assert.equal(result.code, 0);
         assert.equal(
@@ -283,7 +294,7 @@ describe('flag table — -l/--list', () => {
         // project it is asking about — exactly as a launch does.
         const [connect] = result.calls;
         assert.equal(connect.type, 'connect');
-        assert.equal(connect.projectPath, result.dir);
+        assert.equal(connect.projectPath, result.root);
     });
 
     test('the MCP session stays open until the listing has been read', async () => {

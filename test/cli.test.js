@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { OPTIONS } from '../src/args.js';
@@ -101,8 +101,24 @@ describe('runCli — project and preset', () => {
         try {
             const h = fakeCliDeps({ cwd: '/' });
             assert.equal(await runCli(['--project', dir, 'web'], h.deps), 0);
-            assert.equal(h.calls[0].projectPath, dir, 'projectPath goes to the IDE');
+            assert.equal(h.calls[0].projectPath, await realpath(dir), 'projectPath goes to the IDE');
         } finally {
+            await cleanup();
+        }
+    });
+
+    test('--project through a symlink hands the IDE the real path', async () => {
+        // The IDE knows a project by its real path (macOS: /var → /private/var).
+        const { dir, cleanup } = await tmpProject();
+        const { dir: links, cleanup: cleanupLinks } = await tmpDir();
+        try {
+            const link = path.join(links, 'linked-project');
+            await symlink(dir, link, 'dir');
+            const h = fakeCliDeps({ cwd: '/' });
+            assert.equal(await runCli(['--project', link, 'web'], h.deps), 0);
+            assert.equal(h.calls[0].projectPath, await realpath(dir));
+        } finally {
+            await cleanupLinks();
             await cleanup();
         }
     });
@@ -112,7 +128,7 @@ describe('runCli — project and preset', () => {
         try {
             const h = fakeCliDeps({ cwd: path.dirname(dir) });
             assert.equal(await runCli(['--project', path.basename(dir), 'web'], h.deps), 0);
-            assert.equal(h.calls[0].projectPath, dir);
+            assert.equal(h.calls[0].projectPath, await realpath(dir));
         } finally {
             await cleanup();
         }
