@@ -38,6 +38,18 @@ export function changelogSection(markdown, component, version) {
     return (next === -1 ? rest : rest.slice(0, next)).trim();
 }
 
+/**
+ * The plugin's version, as `ide-plugin/build.gradle.kts` sets it — the one place it lives.
+ *
+ * @param {string} buildGradleKts
+ * @returns {string}
+ */
+export function gradleVersion(buildGradleKts) {
+    const match = /^version\s*=\s*"([^"]+)"\s*$/m.exec(buildGradleKts);
+    if (!match) throw new Error('no version = "…" line in build.gradle.kts');
+    return match[1];
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const [command, ...args] = process.argv.slice(2);
     try {
@@ -48,8 +60,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const [component, version] = args;
             const file = fileURLToPath(new URL('../CHANGELOG.md', import.meta.url));
             console.log(changelogSection(readFileSync(file, 'utf8'), /** @type {'cli' | 'plugin'} */ (component), version));
+        } else if (command === 'gradle-version') {
+            const file = fileURLToPath(new URL('../ide-plugin/build.gradle.kts', import.meta.url));
+            console.log(gradleVersion(readFileSync(file, 'utf8')));
         } else {
-            throw new Error('usage: release.js check <tag> <prefix> <version> | notes <cli|plugin> <version>');
+            throw new Error('usage: release.js check <tag> <prefix> <version> | notes <cli|plugin> <version> | gradle-version');
         }
     } catch (err) {
         console.error(`release: ${/** @type {Error} */ (err).message}`);

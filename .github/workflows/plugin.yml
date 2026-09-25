@@ -1,0 +1,85 @@
+name: plugin
+
+on:
+  pull_request:
+    paths: ['ide-plugin/**', '.github/workflows/plugin.yml']
+  push:
+    branches: [main]
+    paths: ['ide-plugin/**', '.github/workflows/plugin.yml']
+    tags: ['plugin-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ide-plugin
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # GitHub Release on a tag
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - id: version
+        run: echo "version=$(node ../scripts/release.js gradle-version)" >> "$GITHUB_OUTPUT"
+
+      - if: startsWith(github.ref, 'refs/tags/plugin-v')
+        run: node ../scripts/release.js check "$GITHUB_REF_NAME" plugin-v "${{ steps.version.outputs.version }}"
+
+      - run: ./gradlew buildPlugin verifyPlugin
+
+      - if: startsWith(github.ref, 'refs/tags/plugin-v') || github.event_name == 'workflow_dispatch'
+        run: ./gradlew signPlugin
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wsc-companion-${{ steps.version.outputs.version }}-signed
+          path: ide-plugin/build/distributions/*-signed.zip
+
+      - id: marketplace
+        if: startsWith(github.ref, 'refs/tags/plugin-v')
+        name: Already on Marketplace?
+        # The list answers 404 for a plugin that was never uploaded, which reads as "not published".
+        run: |
+          if curl -fsS 'https://plugins.jetbrains.com/plugins/list?pluginId=dev.wsc.ide' \
+               | grep -q "<version>${{ steps.version.outputs.version }}</version>"; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: startsWith(github.ref, 'refs/tags/plugin-v') && steps.marketplace.outputs.published == 'false'
+        run: ./gradlew publishPlugin
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+
+      - if: startsWith(github.ref, 'refs/tags/plugin-v')
+        name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          node ../scripts/release.js notes plugin "$version" > "$RUNNER_TEMP/notes.md"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "wsc Companion $version" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release upload "$GITHUB_REF_NAME" build/distributions/*-signed.zip --clobber

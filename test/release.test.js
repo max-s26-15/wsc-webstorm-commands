@@ -1,7 +1,21 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { changelogSection, checkReleaseTag } from '../scripts/release.js';
+import { changelogSection, checkReleaseTag, gradleVersion } from '../scripts/release.js';
+
+describe('gradleVersion', () => {
+    test('reads the top-level version assignment', () => {
+        assert.equal(gradleVersion('group = "dev.wsc"\nversion = "0.5.1"\n'), '0.5.1');
+    });
+
+    test('ignores versions of Gradle plugins', () => {
+        assert.equal(gradleVersion('plugins {\n    kotlin("jvm") version "2.4.20"\n}\nversion = "0.5.1"\n'), '0.5.1');
+    });
+
+    test('no version is an error, not an empty tag check', () => {
+        assert.throws(() => gradleVersion('group = "dev.wsc"\n'), /no version/);
+    });
+});
 
 describe('checkReleaseTag', () => {
     test('a matching tag passes', () => {
