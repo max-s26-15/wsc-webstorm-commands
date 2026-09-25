@@ -1,7 +1,25 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 import { changelogSection, checkReleaseTag, gradleVersion } from '../scripts/release.js';
+
+// Guards every future release too: a version bump without its CHANGELOG entry turns this red,
+// long before a tag would have stopped at `release.js notes`.
+describe('CHANGELOG.md', () => {
+    const md = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+    const pkg = createRequire(import.meta.url)('../package.json');
+    const gradle = readFileSync(new URL('../ide-plugin/build.gradle.kts', import.meta.url), 'utf8');
+
+    test('has notes for the CLI version in package.json', () => {
+        assert.ok(changelogSection(md, 'cli', pkg.version).length > 0);
+    });
+
+    test('has notes for the plugin version in build.gradle.kts', () => {
+        assert.ok(changelogSection(md, 'plugin', gradleVersion(gradle)).length > 0);
+    });
+});
 
 describe('gradleVersion', () => {
     test('reads the top-level version assignment', () => {
