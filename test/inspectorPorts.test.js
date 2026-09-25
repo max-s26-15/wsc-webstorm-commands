@@ -21,7 +21,12 @@ describe('isPortFree', () => {
         }
     });
 
-    test('a listener on every interface also blocks the loopback port', async () => {
+    // Linux semantics. macOS and Windows let a socket bind 127.0.0.1:<port> beside another
+    // one's 0.0.0.0:<port> (libuv sets SO_REUSEADDR), so there the inspector's bind succeeds
+    // too — and "free" is the right answer, which is what isPortFree gives.
+    test('a listener on every interface also blocks the loopback port', {
+        skip: process.platform !== 'linux' && `binding beside a wildcard listener is allowed on ${process.platform}`,
+    }, async () => {
         // What a container-facing dev server looks like: bound to 0.0.0.0, but Node's
         // inspector still cannot take 127.0.0.1:<port> afterwards.
         const { port, close } = await occupyPort('0.0.0.0');

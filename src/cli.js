@@ -208,7 +208,9 @@ async function resolveProjectRoot(explicit, cwd) {
         throw new WscError(`--project: not a WebStorm project (no ${CONFIG_DIR}/ in ${root})`);
     }
 
-    return root;
+    // The IDE knows a project by its real path; a symlinked one (macOS's /var → /private/var
+    // is enough) would read as a project it does not have open.
+    return fs.realpath(root);
 }
 
 /**
