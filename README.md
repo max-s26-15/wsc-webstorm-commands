@@ -296,8 +296,8 @@ it never contacts WebStorm, since which presets exist has nothing to do with the
 what it deleted, so the deletion can be undone by hand from the output alone:
 
 ```
-$ wsc --delete-preset old-one --project /home/max-s26/.claude/jobs/a733eff5/tmp/demo-app
-deleted preset "old-one" from /home/max-s26/.claude/jobs/a733eff5/tmp/demo-app/.idea/webstorm-commands.json
+$ wsc --delete-preset old-one
+deleted preset "old-one" from /tmp/demo-app/.idea/webstorm-commands.json
   - test:watch
   - test:coverage:debug
   - ⌘ seed db
@@ -324,10 +324,10 @@ presets are still left, that reset points at a preset which may not exist yet, s
 about it immediately instead of waiting for the next bare `wsc` to fail on it:
 
 ```
-$ wsc --delete-preset main --project /home/max-s26/.claude/jobs/a733eff5/tmp/demo-app-default
-deleted preset "main" from /home/max-s26/.claude/jobs/a733eff5/tmp/demo-app-default/.idea/webstorm-commands.json
+$ wsc --delete-preset main
+deleted preset "main" from /tmp/demo-app-default/.idea/webstorm-commands.json
   - test
-warn: "main" was the default preset; defaultPreset is now "default", which does not exist yet — run `wsc -c` to create it, or set defaultPreset in /home/max-s26/.claude/jobs/a733eff5/tmp/demo-app-default/.idea/webstorm-commands.json
+warn: "main" was the default preset; defaultPreset is now "default", which does not exist yet — run `wsc -c` to create it, or set defaultPreset in /tmp/demo-app-default/.idea/webstorm-commands.json
 ```
 
 ## `--preset <name>`
