@@ -559,7 +559,10 @@ async function runDeletePreset({ projectRoot, config, name, log }) {
     log.info(`deleted preset "${name}" from ${filePath}`);
     for (const entry of result.entries) log.info(`  - ${presetEntryLabel(entry)}`);
 
-    if (result.defaultReset && listPresets(result.config).length > 0) {
+    // Only when the reset default names nothing: a surviving preset called "default" means
+    // the next bare `wsc` simply launches that one, and there is nothing to warn about.
+    const { defaultPreset } = result.config;
+    if (result.defaultReset && listPresets(result.config).length > 0 && !hasPreset(result.config, defaultPreset)) {
         log.warn(
             `"${name}" was the default preset; defaultPreset is now "${result.config.defaultPreset}", ` +
                 `which does not exist yet — run \`wsc -c\` to create it, or set defaultPreset in ${filePath}`,

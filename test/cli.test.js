@@ -1658,6 +1658,16 @@ describe('runCli — --delete-preset', () => {
         assert.match(result.stderr, /webstorm-commands\.json/);
     });
 
+    test('deleting the default does not warn when a preset called "default" remains', async () => {
+        const config = JSON.stringify({ defaultPreset: 'main', presets: { main: [{ name: 'web' }], default: [] } });
+        const result = await deleting(['--delete-preset', 'main'], { config });
+
+        assert.equal(result.code, 0);
+        assert.equal(result.file.defaultPreset, 'default');
+        assert.deepEqual(Object.keys(result.file.presets), ['default']);
+        assert.doesNotMatch(result.stderr, /warn:|wsc -c/);
+    });
+
     test('deleting the default when it is the last preset does not warn', async () => {
         const config = JSON.stringify({ defaultPreset: 'main', presets: { main: [{ name: 'web' }] } });
         const result = await deleting(['--delete-preset', 'main'], { config });
