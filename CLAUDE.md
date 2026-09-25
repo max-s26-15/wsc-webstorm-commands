@@ -21,7 +21,25 @@ configuration behind it, launched as a named Terminal tab.
 Since then: Tab completion for zsh and bash (`wsc --completion <shell>`, `src/completion/`).
 Since then: `wsc --delete-preset <name>` — a fifth intent that edits `.idea/webstorm-commands.json`
 and never contacts the IDE.
-What is left is user-triggered: `/code-review` over the whole diff before the first version tag.
+Since then: public-release preparation — npm package `webstorm-commands` (MIT, `engines.node >=22`,
+`files` allow-list, a second bin `wsc-mcp-probe`), the plugin renamed **wsc Companion** (`dev.wsc.ide`,
+0.5.1, `untilBuild 262.*`, built against a downloaded WebStorm), CI on Linux/macOS/Windows × Node
+22/24/26 (`.github/workflows/ci.yml`), release workflows (`release-cli.yml`, `plugin.yml`, their testable
+logic in `scripts/release.js`), Windows refusal of the POSIX terminal routes (`src/exec/terminalShell.js`),
+and CONTRIBUTING / SECURITY / CHANGELOG / issue templates.
+What is left is the launch, mostly user-driven: `/code-review` over the whole diff, a live acceptance
+run with the packed tarball and the CI-signed plugin zip, the dates in `CHANGELOG.md`, the first
+`npm publish` and Marketplace upload by hand (then npm trusted publishing and `PUBLISH_TOKEN`), and the
+tags `v0.1.0` / `plugin-v0.5.1`.
+
+## Releasing
+
+Two version lines, released independently: tag `v<version>` publishes the CLI to npm, tag
+`plugin-v<version>` publishes wsc Companion to Marketplace; both create the GitHub Release from
+`CHANGELOG.md`. The tag must equal the version in the repository (`scripts/release.js check`), and
+`npm test` fails when the current version has no CHANGELOG entry. A version that is already
+published is skipped, so the hand-published first versions and reruns are harmless. The steps are
+in `CONTRIBUTING.md`.
 
 ## Commands
 
