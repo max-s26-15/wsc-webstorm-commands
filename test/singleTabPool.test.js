@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createLogger } from '../src/log.js';
 import { SHELL } from '../src/fallback/terminalTabs.js';
-import { lineBuffer, runSingleTabPool } from '../src/fallback/singleTabPool.js';
+import { lineBuffer, missingShellMessage, runSingleTabPool } from '../src/fallback/singleTabPool.js';
 import { fakeSignals, fakeSpawn } from '../test-utils/fake-child.js';
 import { fakeStream } from '../test-utils/capture.js';
 
@@ -128,6 +128,21 @@ describe('runSingleTabPool', () => {
 
         assert.equal(await run, 1);
         assert.match(err(), /web: spawn bash ENOENT/);
+    });
+
+    test('a missing bash is one readable line, not a spawn error per tab', async () => {
+        // Windows without Git Bash: every tab fails the same way, and ENOENT says nothing useful.
+        const enoent = Object.assign(new Error('spawn bash ENOENT'), { code: 'ENOENT' });
+        const { spawn } = fakeSpawn({ pipes: true, failWith: enoent });
+        const { log, err } = testLogger({ NO_COLOR: '1' });
+
+        const code = await runSingleTabPool(TABS, { cwd: '/p', log, spawn, process: fakeSignals(), platform: 'win32' });
+
+        assert.equal(code, 1);
+        const errors = err().split('\n').filter((line) => line.startsWith('error:'));
+        assert.deepEqual(errors, [`error: ${missingShellMessage()}`]);
+        assert.doesNotMatch(err(), /ENOENT/);
+        assert.match(missingShellMessage(), /Git Bash/);
     });
 
     test('the last words of a crashing process are printed before its status line', async () => {
