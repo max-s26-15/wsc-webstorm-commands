@@ -24,55 +24,26 @@ answering" examples. Paths such as `/home/max-s26/.nvm/…` are the author's; yo
 
 ## Requirements
 
-- **Node.js ≥ 18** and **git**.
-- **WebStorm**, running, with the project open. Its built-in MCP Server is what `wsc` talks to.
-  Developed and tested on Linux with WebStorm 2026.2.3; the plugin needs 2026.2 or newer.
-- To build the plugin: a **JDK**. The JetBrains Runtime that comes with WebStorm (its `jbr/`
-  folder) is the one the plugin was built with, so use that. Gradle and everything else it needs
-  are downloaded on the first build, so you also need network access.
+- **Node.js 22 or newer.**
+- **WebStorm 2026.2** (build 262), running, with the project open. Its built-in MCP Server is what
+  `wsc` talks to. Developed and tested on Linux with WebStorm 2026.2.3.
 
 ## Installation
 
-### 1. Get the code
+### 1. Install the `wsc` command
 
-Clone the repository — over HTTPS:
-
-```bash
-git clone https://github.com/max-s26-15/wsc-webstorm-commands.git
+```
+$ npm i -g webstorm-commands
+$ wsc --version
+0.1.0
 ```
 
-or over SSH:
+This installs two commands: `wsc`, and `wsc-mcp-probe`, the diagnostic used in step 4. If `npm i -g`
+fails with a permissions error, your global npm prefix is not writable: use a Node installed through
+[nvm](https://github.com/nvm-sh/nvm) (no `sudo` needed), or point npm at a directory you own with
+`npm config set prefix ~/.npm-global` and add `~/.npm-global/bin` to `PATH`.
 
-```bash
-git clone git@github.com:max-s26-15/wsc-webstorm-commands.git
-```
-
-then go into it:
-
-```bash
-cd webstorm-commands
-```
-
-### 2. Install the dependencies
-
-```bash
-npm install
-```
-
-### 3. Install the `wsc` command
-
-```bash
-npm link
-wsc --version
-```
-
-`npm link` puts a `wsc` command on your `PATH` that runs straight from this checkout, so
-`git pull` is all it takes to update it. If it fails with a permissions error, your global npm
-prefix is not writable: use a Node installed through [nvm](https://github.com/nvm-sh/nvm)
-(no `sudo` needed), or point npm at a directory you own with `npm config set prefix ~/.npm-global`
-and add `~/.npm-global/bin` to `PATH`.
-
-### 4. Turn on WebStorm's MCP Server
+### 2. Turn on WebStorm's MCP Server
 
 In WebStorm: **Settings → Tools → MCP Server** →
 
@@ -85,52 +56,23 @@ if that ever fails, pass it with `--mcp-port <n>` / `WSC_MCP_PORT`, or pin it wi
 **Help → Edit Custom VM Options →** `-Didea.mcp.server.force.port=<port>`.
 
 At this point `wsc` already works — try `wsc --list` inside a project that is open in WebStorm.
-The next two steps are for the Debug tab.
+The next step is for the Debug tab and for real Terminal tabs.
 
-### 5. Build the IDE plugin
+### 3. Install the IDE plugin, and restart the IDE
 
-```bash
-cd ide-plugin
-JAVA_HOME=/snap/webstorm/current/jbr ./gradlew buildPlugin
-cd ..
-```
-
-The plugin is built against the WebStorm you already have installed, so tell the build where it
-is. The command above is for the **snap** install on Linux, which is what the author uses and the
-build's default. For any other install, pass both the JDK and the IDE:
-
-```bash
-JAVA_HOME=<WebStorm folder>/jbr ./gradlew buildPlugin -PwebstormPath=<WebStorm folder>
-```
-
-where `<WebStorm folder>` is the folder that contains `product-info.json` (on macOS, the
-`WebStorm.app` bundle; the runtime is then under `Contents/jbr/Contents/Home`). On Windows use
-`gradlew.bat` and set `JAVA_HOME` the Windows way. I have only run the snap variant; the others
-follow the same pattern.
-
-The first build downloads Gradle and dependencies and takes a minute or two. It produces:
-
-```
-ide-plugin/build/distributions/wsc-ide-plugin-0.4.0.zip
-```
-
-(the version in the file name changes when the plugin does).
-
-### 6. Install the plugin by hand, and restart the IDE
-
-1. WebStorm → **Settings → Plugins → ⚙ (gear) → Install Plugin from Disk…**
-2. Pick `ide-plugin/build/distributions/wsc-ide-plugin-<version>.zip` → **OK**.
+1. Download `wsc-companion-<version>-signed.zip` from the latest `plugin-v*` release on
+   [GitHub](https://github.com/max-s26-15/wsc-webstorm-commands/releases).
+2. WebStorm → **Settings → Plugins → ⚙ (gear) → Install Plugin from Disk…** → pick the zip → **OK**.
 3. **Restart the IDE.**
 
-### 7. Check that it worked
+To build the plugin yourself instead, see `CONTRIBUTING.md`.
+
+### 4. Check that it worked
 
 Run the probe against a project that is open in WebStorm (it needs the project's path):
 
 ```
-$ npm run mcp:probe -- /home/max-s26/max/new-projects/wsc-webstorm-commands
-> webstorm-commands@1.0.0 mcp:probe
-> node scripts/mcp-probe.js /home/max-s26/max/new-projects/wsc-webstorm-commands
-
+$ wsc-mcp-probe /home/max-s26/max/new-projects/wsc-webstorm-commands
 ✓ MCP Server on port 64542
 ✓ handshake complete (project: /home/max-s26/max/new-projects/wsc-webstorm-commands)
 ✓ 45 tools available
@@ -148,27 +90,26 @@ $ npm run mcp:probe -- /home/max-s26/max/new-projects/wsc-webstorm-commands
 ```
 
 The lines to look for are `✓ debug_run_configuration` and `✓ open_terminal_tab`. A `✗` there only
-means the plugin is not installed, is older than 0.4.0, or the IDE was not restarted — `wsc` still
-works: `:debug` takes the Terminal route, and Terminal tabs use the IDE's own terminal tool.
+means the plugin is not installed, or the IDE was not restarted — `wsc` still works: `:debug` takes
+the Terminal route, and Terminal tabs use the IDE's own terminal tool.
 
 ### Updating
 
 ```bash
-git pull && npm install
+npm i -g webstorm-commands@latest
 ```
 
-Rebuild and reinstall the plugin (steps 5–6) after a `git pull` that touches `ide-plugin/`, **and
-after every WebStorm update**: the MCP API the plugin extends is not a documented stable API, so
-a new IDE build can need a fresh build of it. The plugin declares `since-build 262` (WebStorm 2026.2).
+The plugin supports one WebStorm major at a time: after a WebStorm major update, install the
+plugin release that matches it.
 
 ### Uninstalling
 
-`npm unlink -g webstorm-commands` removes the command; **Settings → Plugins** removes the plugin.
+`npm rm -g webstorm-commands` removes both commands; **Settings → Plugins** removes the plugin.
 
 ## Tab completion
 
 Add `source <(wsc --completion zsh)` to `~/.zshrc`, or `source <(wsc --completion bash)` to `~/.bashrc`;
-`wsc` has to be on your `PATH` (`npm link`).
+`wsc` has to be on your `PATH` (`npm i -g webstorm-commands`).
 
 - `source <(wsc --completion zsh)` costs about 0.2 s in every new shell. Save the script once
   (`wsc --completion zsh > ~/.wsc-completion.zsh`) and `source` that file instead.
@@ -598,14 +539,14 @@ not atomic, because by then the user has already been told what is coming.
 
 ## Troubleshooting
 
-- **`✗ debug_run_configuration` in `mcp:probe`, or the "Terminal window" warning on `:debug`.**
+- **`✗ debug_run_configuration` in `wsc-mcp-probe`, or the "Terminal window" warning on `:debug`.**
   The plugin is not installed, or the IDE was not restarted after installing it, or a WebStorm
-  update outdated it: rebuild and reinstall it (steps 5–6).
+  update outdated it: install the matching plugin release (installation step 3).
 - **`Streamable HTTP session not found` right after restarting WebStorm.** The MCP Server is still
   settling. Wait a few seconds and run the command again.
 - **`doesn't correspond to any open project`.** The MCP Server serves the projects open in the IDE
   right now. Open the project (or a folder inside it) in WebStorm, or pass `--project`.
-- **A launch waits for a click in the IDE.** Brave Mode is off — see installation step 4.
+- **A launch waits for a click in the IDE.** Brave Mode is off — see installation step 2.
 
 ## Known limitations
 
@@ -613,7 +554,7 @@ not atomic, because by then the user has already been told what is coming.
   back to the Terminal.** For example a configuration no debug runner accepts. It also gives the IDE
   10 seconds to confirm that the Debug tab exists, and reports a launch as failed if it does not.
 - **The plugin is tied to the IDE build.** It extends an MCP API that JetBrains does not document as
-  stable: rebuild it after a WebStorm update (see [Updating](#updating)).
+  stable: after a WebStorm update, install the matching plugin release (see [Updating](#updating)).
 - **A configuration WebStorm has not saved yet gets a guessed command line.**
   `--target=terminal`, `:terminal` and the Terminal route of `:debug` need a shell command, and
   `get_run_configurations` reports only a name and a type — so the real definition is read out of
