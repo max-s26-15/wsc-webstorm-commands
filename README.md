@@ -595,5 +595,5 @@ npm run typecheck     # tsc --noEmit — the JSDoc types
 npm run mcp:probe     # manual diagnostic against a live WebStorm instance
 ```
 
-`CLAUDE.md` documents the architecture and the reasoning behind each design decision;
+`AGENTS.md` documents the architecture and the reasoning behind each design decision;
 `ide-plugin/README.md` covers building the plugin.
