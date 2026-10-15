@@ -16,9 +16,10 @@ error when the IDE never confirms.
 Since 0.5.0 every session it starts comes up with **breakpoints muted** — the Debug tab's *Mute Breakpoints*
 button is already pressed, and pressing it again turns them back on. This is unconditional (there is no parameter
 for it): a preset typically starts several services under the debugger at once, and breakpoints set for one of
-them should not stop all the others. The mute is applied from `XDebuggerManagerListener.processStarted`, the moment
-the IDE creates the session, rather than after the tab is confirmed, so the window in which a breakpoint can still
-hit is the few milliseconds between the two; the session behind the confirmed tab is muted again as a backstop.
+them should not stop all the others. The mute is applied after the IDE confirms the Debug tab exists.
+`XDebuggerManagerListener.processStarted` fires before the session's debug process is initialized, so muting
+inside that listener causes a `NullPointerException`. A breakpoint can still hit before the tab is confirmed;
+muting does not automatically resume an already-paused session.
 The IDE remembers the toggle per configuration, so re-running it from the Debug tab keeps it muted too.
 
 `wsc` uses it by itself: on a `:debug` entry it asks the IDE for its tools, and when `debug_run_configuration`

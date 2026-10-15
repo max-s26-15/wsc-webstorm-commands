@@ -28,6 +28,10 @@ First Marketplace release, as **wsc Companion** (`dev.wsc.ide`).
 - New plugin ID and name (was "wsc Debug Tool", `dev.wsc.debug-tool`): uninstall the old one once — the IDE treats them as different plugins.
 - Declared compatible with WebStorm 2026.2 (build 262.*) only.
 
+### Fixed
+- Use the debug session name rather than its deprecated `RunContentDescriptor` when matching sessions, avoiding an IDE error in split debugger mode.
+- Avoid a `NullPointerException` on debug launch by muting breakpoints only after the Debug tab is confirmed, rather than during session initialization. A breakpoint can still hit before muting.
+
 ### Included (since 0.4.0 / 0.5.0)
 - `debug_run_configuration` — a real Debug tab for `wsc name:debug`; sessions start with breakpoints muted.
 - `open_terminal_tab` — real Terminal tabs (a pty, not pipes) for every Terminal tab wsc opens.
