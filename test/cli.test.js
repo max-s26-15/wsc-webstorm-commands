@@ -1508,7 +1508,7 @@ describe('runCli — a real Terminal tab through the wsc IDE plugin', () => {
         const { code, output, calls, named } = await launch([], { tools: [TAB_TOOL] });
 
         assert.equal(code, 0);
-        assert.deepEqual(calls.map((c) => [c.name, c.args]), [[TAB_TOOL, { tabName: 'ngrok', command: 'ngrok http 8000' }]]);
+        assert.deepEqual(calls.map((c) => [c.name, c.args]), [[TAB_TOOL, { tabName: 'ngrok', command: 'ngrok http 8000', kind: 'custom', mode: 'terminal' }]]);
         assert.deepEqual(named, [], 'no session has to be opened under the tab\'s name');
         assert.doesNotMatch(output, PIPED);
         assert.match(output, /started ngrok \(terminal\)/);

@@ -11,13 +11,15 @@
  * The run window and the plugin's debug_run_configuration are unaffected: there the IDE
  * builds the command line itself.
  */
+import { RESTART_TERMINAL_TOOL } from '../mcp/control.js';
 import { TERMINAL_TAB_TOOL, TERMINAL_TOOL } from '../mcp/execute.js';
 
 /** @typedef {import('./planBuilder.js').McpCall} McpCall */
 
 export const POSIX_TERMINAL_ENV = 'WSC_POSIX_TERMINAL';
 
-const TERMINAL_TOOLS = new Set([TERMINAL_TOOL, TERMINAL_TAB_TOOL]);
+// A restart types its command into the tab again, so it is the same POSIX text as a launch.
+const TERMINAL_TOOLS = new Set([TERMINAL_TOOL, TERMINAL_TAB_TOOL, RESTART_TERMINAL_TOOL]);
 
 /**
  * @param {McpCall[]} calls

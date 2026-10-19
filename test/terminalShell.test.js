@@ -13,9 +13,15 @@ const pluginDebug = { name: 'api', mode: 'debug', tool: 'debug_run_configuration
 const pipedTerminal = { name: 'test', mode: 'terminal', tool: 'execute_terminal_command', arguments: {} };
 const realTerminal = { name: 'seed db', mode: 'terminal', tool: 'open_terminal_tab', arguments: {} };
 
+const restartedTerminal = { name: 'ngrok', mode: 'terminal', tool: 'restart_terminal_tab', arguments: {} };
+
 describe('callsNeedingPosixTerminal', () => {
     test('is every call that types a command into a terminal, whichever tool opens it', () => {
         assert.deepEqual(callsNeedingPosixTerminal([run, pipedTerminal, pluginDebug, realTerminal]), [pipedTerminal, realTerminal]);
+    });
+
+    test('a restart types its command into the tab again, so it is one of them', () => {
+        assert.deepEqual(callsNeedingPosixTerminal([run, restartedTerminal]), [restartedTerminal]);
     });
 });
 
