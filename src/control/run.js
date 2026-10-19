@@ -6,22 +6,31 @@
  * happens, and only a failure that is not about one entry (the transport, the protocol) ends
  * the run early — the remaining steps would fail the same way.
  */
+import { customCommandLine, announceCustomCommands } from '../exec/customCommands.js';
+import { ideaCommandResolver } from '../exec/ideaCommands.js';
+import { DEFAULT_TARGET, buildExecutionPlan, needsTerminalCommands } from '../exec/planBuilder.js';
+import { assertPosixTerminal } from '../exec/terminalShell.js';
 import { DEBUG_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL } from '../mcp/execute.js';
-import { LIST_RUNNING_TOOL, parseRunning, stopRunCall, stopTerminalCall } from '../mcp/control.js';
-import { normalizeRunConfigs } from '../resolve.js';
+import {
+    LIST_RUNNING_TOOL,
+    parseRunning,
+    restartRunCall,
+    restartTerminalCall,
+    stopRunCall,
+    stopTerminalCall,
+} from '../mcp/control.js';
+import { buildLaunchPlan, normalizeRunConfigs } from '../resolve.js';
 import { ControlError, formatControlPlan, planControl, selectTargets } from './select.js';
 
 /**
  * @typedef {import('./select.js').ControlStep} ControlStep
  * @typedef {import('./select.js').ControlTarget} ControlTarget
  * @typedef {import('../mcp/execute.js').ToolCall} ToolCall
- * @typedef {{
- *   info: (...a: any[]) => void,
- *   warn: (...a: any[]) => void,
- *   error: (...a: any[]) => void,
- *   debug: (...a: any[]) => void,
- *   out: (...a: any[]) => void,
- * }} Logger
+ * @typedef {import('../exec/planBuilder.js').CommandFor} CommandFor
+ * @typedef {import('../exec/planBuilder.js').McpCall} McpCall
+ * @typedef {import('../resolve.js').PlanEntry} PlanEntry
+ * @typedef {import('../resolve.js').RunConfigInfo} RunConfigInfo
+ * @typedef {ReturnType<typeof import('../log.js').createLogger>} Logger
  *
  * @typedef {object} ControlContext
  * @property {'stop' | 'restart'} action
@@ -88,19 +97,122 @@ export async function runControl(ctx) {
     log.info(`${ctx.dryRun ? `would ${action}` : verb} ${count}:`);
     log.out(formatControlPlan(steps));
 
-    if (action === 'restart') throw new Error('restart: Task 8');
+    // Everything a restart will send is built here, ahead of the --dry-run return, so a dry run
+    // checks it as a launch's dry run does — and so a refusal (Windows, an unbuildable command)
+    // comes before the first entry is stopped.
+    const commandFor = lazyCommandFor(ctx);
+    const restartCalls = new Map(await Promise.all(
+        steps.flatMap((step) => (step.action === 'restart' ? [restartCall(step, commandFor).then((call) => /** @type {const} */ ([step, call]))] : [])),
+    ));
+    const launchTargets = steps.flatMap((step) => (step.action === 'launch' ? [step.target] : []));
+    const launch = launchTargets.length > 0 ? await buildLaunch(launchTargets, configs, ctx, commandFor) : null;
+
+    assertPosixTerminal(
+        [
+            ...[...restartCalls].map(([step, call]) => ({ ...call, name: step.target.name, mode: step.target.mode })),
+            ...(launch?.calls ?? []),
+        ],
+        { platform: ctx.platform, env: ctx.env },
+    );
+    announceCustomCommands(
+        [...restartCalls.keys()]
+            .filter((step) => step.target.kind === 'custom')
+            .map((step) => ({ name: step.target.name, mode: 'terminal', commands: step.target.commands ?? [], source: 'preset' })),
+        log,
+    );
 
     if (ctx.dryRun) return code;
 
     /** @type {Set<ControlTarget>} */
     const failed = new Set();
     for (const step of steps) {
-        if (step.action !== 'stop') continue;
-        if (!(await attempt(client, stopCall(step), step.target, log))) failed.add(step.target);
-        else log.info(`stopped ${step.target.name}`);
+        if (step.action === 'launch') continue;
+        const call = step.action === 'stop' ? stopCall(step) : /** @type {ToolCall} */ (restartCalls.get(step));
+        if (!(await attempt(client, call, step.target, log))) {
+            failed.add(step.target);
+        } else if (step.action === 'restart' || !step.relaunch) {
+            log.info(`${step.action === 'stop' ? 'stopped' : 'restarted'} ${step.target.name}`);
+        }
     }
 
-    return report('stopped', targets, failed, log) || code;
+    // Launched only once stopped: a stop that failed leaves the old process where it was, and
+    // a launch beside it would be the duplicate --restart exists to avoid.
+    let launchCode = 0;
+    const relaunch = launchTargets.filter((target) => !failed.has(target));
+    if (relaunch.length > 0) {
+        const ready = relaunch.length === launchTargets.length && launch !== null
+            ? launch
+            : await buildLaunch(relaunch, configs, ctx, commandFor);
+        launchCode = await ctx.launch(ready.plan, ready.calls);
+    }
+
+    const reported = report(action === 'stop' ? 'stopped' : 'restarted', targets, failed, log);
+    return reported || launchCode || code;
+}
+
+/**
+ * The `.idea/`-backed command builder, read at most once and only when a step needs it — a
+ * restart of Run tabs and custom commands never touches the disk.
+ *
+ * @param {ControlContext} ctx
+ * @returns {() => Promise<CommandFor>}
+ */
+function lazyCommandFor(ctx) {
+    /** @type {Promise<CommandFor> | undefined} */
+    let resolver;
+    return () => {
+        resolver ??= ctx.readIdeaRunConfigs(ctx.projectRoot).then((configs) => ideaCommandResolver(configs, ctx.projectRoot));
+        return resolver;
+    };
+}
+
+/**
+ * The call that restarts one place an entry runs.
+ *
+ * A Terminal tab is given its command again, rebuilt from the preset as it reads now — the user's
+ * own commands joined, or a configuration's command line out of `.idea/` — in the mode its tab
+ * was marked with and on the inspector port it already had, so "Attach" keeps working.
+ *
+ * @param {ControlStep & { action: 'restart' }} step
+ * @param {() => Promise<CommandFor>} commandFor
+ * @returns {Promise<ToolCall>}
+ */
+async function restartCall(step, commandFor) {
+    const { target, instance } = step;
+    if (instance.where !== 'terminal') return restartRunCall(target.name);
+    if (target.kind === 'custom') return restartTerminalCall('custom', target.name, customCommandLine(target.commands ?? []));
+
+    const entry = { name: target.name, mode: instance.mode, config: /** @type {RunConfigInfo} */ (target.config), source: /** @type {const} */ ('preset') };
+    const built = (await commandFor())(entry, instance.debugPort === undefined ? {} : { debugPort: instance.debugPort });
+    return restartTerminalCall('config', target.name, built.command);
+}
+
+/**
+ * The ordinary launch, for entries whose preset now gives them another mode: the same plan and
+ * the same calls `wsc --preset …` would build for them, with the default target.
+ *
+ * @param {ControlTarget[]} targets
+ * @param {RunConfigInfo[]} configs
+ * @param {ControlContext} ctx
+ * @param {() => Promise<CommandFor>} commandFor
+ * @returns {Promise<{ plan: PlanEntry[], calls: McpCall[] }>}
+ */
+async function buildLaunch(targets, configs, ctx, commandFor) {
+    const preset = targets.map((target) =>
+        target.kind === 'custom'
+            ? { name: target.name, mode: target.mode, commands: target.commands }
+            : { name: target.name, mode: target.mode },
+    );
+    const plan = buildLaunchPlan({ configs, preset });
+    const debugTool = ctx.tools.has(DEBUG_CONFIGURATION_TOOL);
+    const calls = buildExecutionPlan({
+        plan,
+        debugPortBase: ctx.debugPortBase,
+        debugTool,
+        terminalTool: ctx.tools.has(TERMINAL_TAB_TOOL),
+        commandFor: needsTerminalCommands(plan, DEFAULT_TARGET, { debugTool }) ? await commandFor() : undefined,
+    });
+    return { plan, calls };
 }
 
 /**

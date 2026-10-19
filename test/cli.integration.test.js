@@ -1014,3 +1014,48 @@ describe('flag table — --stop', () => {
         assert.doesNotMatch(result.stderr, /\n\s+at /);
     });
 });
+
+// ── --restart ────────────────────────────────────────────────────────────────
+describe('flag table — --restart', () => {
+    test('--dry-run prints what would restart, in place or anew, and touches nothing', async () => {
+        const config = withPresets({
+            dev: [{ name: 'web', mode: 'debug' }, { name: 'ngrok', mode: 'terminal', commands: ['ngrok http 8000'] }],
+            docs: [{ name: 'docs' }],
+        });
+        const result = await wsc(['--restart', '--dry-run'], { config, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.equal(result.stdout, [
+            'stop     web    Run tab  (preset now says debug)',
+            'restart  ngrok  Terminal tab',
+            'restart  docs   Run tab',
+            'launch   web    as debug',
+            '',
+        ].join('\n'));
+        assert.deepEqual(controlled(result), []);
+        assert.deepEqual(result.executed, []);
+    });
+
+    test('--preset and a name narrow it to one entry of one preset', async () => {
+        const result = await wsc(['--restart', '--preset', 'dev', 'web'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.deepEqual(controlled(result), [['restart_run_configuration', { configurationName: 'web' }]]);
+    });
+
+    test('an entry whose preset now says debug goes through the ordinary launch', async () => {
+        const config = withPresets({ dev: [{ name: 'web', mode: 'debug' }] });
+        const result = await wsc(['--restart'], { config, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'web' }]]);
+        assert.deepEqual(launched(result), ['web:debug']);
+    });
+
+    test('a mode suffix is a usage error: the mode comes from the preset', async () => {
+        const result = await wsc(['--restart', 'web:debug'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 2);
+        assert.match(result.stderr, /drop ":debug" from "web:debug"/);
+    });
+});

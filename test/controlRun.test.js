@@ -7,7 +7,9 @@ import { McpToolError } from '../src/mcp/client.js';
 import { createLogger } from '../src/log.js';
 import { parseConfig } from '../src/presets/store.js';
 import { fakeStream } from '../test-utils/capture.js';
+import { readIdeaRunConfigs } from '../src/fallback/ideaRunConfigs.js';
 import { FIXTURE } from '../test-utils/fake-cli-deps.js';
+import { tmpIdeaProject } from '../test-utils/tmp-dir.js';
 
 const PLUGIN = ['debug_run_configuration', 'open_terminal_tab', 'list_running', 'stop_run_configuration',
     'restart_run_configuration', 'stop_terminal_tab', 'restart_terminal_tab'];
@@ -33,6 +35,10 @@ const WEB_AND_NGROK = {
  * @param {boolean} [opts.dryRun]
  * @param {(name: string, args: any) => unknown} [opts.answer] - overrides a control tool's answer
  * @param {Record<string, object[]>} [opts.presets]
+ * @param {string} [opts.projectRoot] - a real project, whose .idea/ may then be read
+ * @param {string} [opts.platform]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {number} [opts.debugPortBase]
  */
 async function control(opts = {}) {
     const stdout = fakeStream();
@@ -58,13 +64,15 @@ async function control(opts = {}) {
         config: parseConfig(JSON.stringify({ presets: opts.presets ?? PRESETS })),
         presetNames: opts.presetNames ?? null,
         tokens: opts.tokens ?? [],
-        projectRoot: '/nowhere',
+        projectRoot: opts.projectRoot ?? '/nowhere',
         dryRun: opts.dryRun ?? false,
-        debugPortBase: 9229,
-        platform: 'linux',
-        env: {},
+        debugPortBase: opts.debugPortBase ?? 9229,
+        platform: opts.platform ?? 'linux',
+        env: opts.env ?? {},
         log: createLogger({ stdout, stderr, env: { NO_COLOR: '1' } }),
-        readIdeaRunConfigs: async () => { throw new Error('.idea/ must not be read'); },
+        readIdeaRunConfigs: opts.projectRoot
+            ? readIdeaRunConfigs
+            : async () => { throw new Error('.idea/ must not be read'); },
         launch: async (plan, launchCalls) => {
             launched.push({ plan, calls: launchCalls });
             return 0;
@@ -170,5 +178,141 @@ describe('runControl — --stop', () => {
             ['stop_terminal_tab', { kind: 'config', entryName: 'web' }],
         ]);
         assert.match(result.stderr, /^stopping 1 preset entry:$/m);
+    });
+});
+
+describe('runControl — --restart', () => {
+    test('a Run tab restarts in place, with the Rerun tool', async () => {
+        const result = await control({ action: 'restart', running: { runs: [{ configurationName: 'web', mode: 'run' }], terminals: [] } });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(controlCalls(result.calls), [['restart_run_configuration', { configurationName: 'web' }]]);
+        assert.match(result.stderr, /^restarted web$/m);
+        assert.match(result.stderr, /^restarted 1 preset entry$/m);
+    });
+
+    test('a custom command is typed again from the preset as it reads now', async () => {
+        const presets = { dev: [{ name: 'ngrok', mode: 'terminal', commands: ['ngrok http 9000', 'echo up'] }] };
+        const result = await control({ action: 'restart', presets });
+
+        assert.deepEqual(controlCalls(result.calls), [
+            ['restart_terminal_tab', { kind: 'custom', entryName: 'ngrok', command: 'ngrok http 9000 && echo up' }],
+        ]);
+        // Announced like a launch announces it: this is shell text out of a file that may be committed.
+        assert.match(result.stderr, /ngrok: ngrok http 9000 && echo up/);
+    });
+
+    test('a configuration debugged through the terminal keeps its inspector port', async () => {
+        const project = await tmpIdeaProject();
+        try {
+            const result = await control({
+                action: 'restart',
+                projectRoot: project.dir,
+                presets: { dev: [{ name: 'api', mode: 'debug' }] },
+                running: {
+                    runs: [],
+                    terminals: [{ entryName: 'api', kind: 'config', mode: 'debug', debugPort: 9301, commandRunning: true }],
+                },
+            });
+
+            assert.equal(result.code, 0, result.stderr);
+            const [[tool, args]] = controlCalls(result.calls);
+            assert.equal(tool, 'restart_terminal_tab');
+            assert.deepEqual([args.kind, args.entryName], ['config', 'api']);
+            assert.match(args.command, /--inspect-brk=127\.0\.0\.1:9301/);
+        } finally {
+            await project.cleanup();
+        }
+    });
+
+    test('a mode the preset changed: stopped where it runs, then launched by the ordinary launch', async () => {
+        const result = await control({
+            action: 'restart',
+            presets: { dev: [{ name: 'web', mode: 'debug' }] },
+            running: { runs: [{ configurationName: 'web', mode: 'run' }], terminals: [] },
+        });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.deepEqual(controlCalls(result.calls), [['stop_run_configuration', { configurationName: 'web' }]]);
+        assert.equal(result.launched.length, 1);
+        assert.deepEqual(result.launched[0].plan.map((entry) => `${entry.name}:${entry.mode}`), ['web:debug']);
+        assert.deepEqual(result.launched[0].calls.map((call) => call.tool), ['debug_run_configuration']);
+    });
+
+    test('if that stop fails, nothing is launched beside the old process', async () => {
+        const result = await control({
+            action: 'restart',
+            presets: { dev: [{ name: 'web', mode: 'debug' }] },
+            running: { runs: [{ configurationName: 'web', mode: 'run' }], terminals: [] },
+            answer: (name) => { throw new McpToolError(name, '"web" did not stop within 10s'); },
+        });
+
+        assert.equal(result.code, 1);
+        assert.deepEqual(result.launched, []);
+        assert.match(result.stderr, /restarted 0 of 1 — failed: web/);
+    });
+
+    test('--debug-port places the inspector of an entry launched anew through the terminal', async () => {
+        const project = await tmpIdeaProject();
+        try {
+            const result = await control({
+                action: 'restart',
+                projectRoot: project.dir,
+                debugPortBase: 9400,
+                tools: PLUGIN.filter((tool) => tool !== 'debug_run_configuration'),
+                presets: { dev: [{ name: 'api', mode: 'debug' }] },
+                running: { runs: [{ configurationName: 'api', mode: 'run' }], terminals: [] },
+            });
+
+            assert.equal(result.code, 0, result.stderr);
+            const [launch] = result.launched[0].calls;
+            assert.equal(launch.tool, 'open_terminal_tab');
+            assert.equal(launch.debugPort, 9400);
+        } finally {
+            await project.cleanup();
+        }
+    });
+
+    test('a named entry that is not running is not started: restart does not start what is stopped', async () => {
+        const result = await control({
+            action: 'restart',
+            tokens: ['api', 'web'],
+            running: { runs: [{ configurationName: 'web', mode: 'run' }], terminals: [] },
+        });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /"api" is not running — start it with `wsc api`/);
+        assert.deepEqual(controlCalls(result.calls), [['restart_run_configuration', { configurationName: 'web' }]]);
+    });
+
+    test('--dry-run restarts and launches nothing', async () => {
+        const result = await control({
+            action: 'restart',
+            dryRun: true,
+            presets: { dev: [{ name: 'web', mode: 'debug' }, PRESETS.dev[2]] },
+        });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(controlCalls(result.calls), []);
+        assert.deepEqual(result.launched, []);
+        assert.match(result.stderr, /^would restart 2 preset entries:$/m);
+        assert.equal(result.stdout, [
+            'stop     web    Run tab  (preset now says debug)',
+            'restart  ngrok  Terminal tab',
+            'launch   web    as debug',
+            '',
+        ].join('\n'));
+    });
+
+    test('on Windows a restart that types into a terminal is refused before the first call', async () => {
+        await assert.rejects(control({ action: 'restart', platform: 'win32' }), (err) => {
+            assert.equal(/** @type {Error} */ (err).name, 'PosixTerminalRequiredError');
+            return true;
+        });
+    });
+
+    test('...unless the user promised a POSIX terminal', async () => {
+        const result = await control({ action: 'restart', platform: 'win32', env: { WSC_POSIX_TERMINAL: '1' } });
+        assert.equal(result.code, 0, result.stderr);
     });
 });
