@@ -311,6 +311,53 @@ by hand stays stopped, and nothing is launched twice.
 - A named entry that is not running is already stopped for `--stop`, and an error for `--restart`,
   which does not start what is stopped (`wsc web` does).
 
+The blocks below were captured with these two presets launched together (`wsc --preset dev tools`);
+by then `test:coverage` had finished, so it is not running and not restarted:
+
+```json
+{
+  "dev": [
+    { "name": "test:watch" },
+    { "name": "test:coverage", "mode": "debug" },
+    { "name": "types", "mode": "terminal", "commands": ["npx tsc --noEmit --watch -p jsconfig.json"] }
+  ],
+  "tools": [
+    { "name": "clock", "mode": "terminal", "commands": ["while true; do date; sleep 5; done"] }
+  ]
+}
+```
+
+```
+$ wsc --restart --dry-run
+would restart 3 preset entries:
+restart  test:watch  Run tab
+restart  types       Terminal tab
+restart  clock       Terminal tab
+warn: custom commands from the preset:
+  types: npx tsc --noEmit --watch -p jsconfig.json
+  clock: while true; do date; sleep 5; done
+```
+
+```
+$ wsc --restart types
+restarting 1 preset entry:
+restart  types  Terminal tab
+warn: custom commands from the preset:
+  types: npx tsc --noEmit --watch -p jsconfig.json
+restarted types
+restarted 1 preset entry
+```
+
+```
+$ wsc --stop --preset dev
+stopping 2 preset entries:
+stop     test:watch  Run tab
+stop     types       Terminal tab
+stopped test:watch
+stopped types
+stopped 2 preset entries
+```
+
 Both need wsc Companion 0.6.0 or later: the IDE's own MCP tools can neither list nor stop anything.
 
 ## Debugging (`:debug`)
