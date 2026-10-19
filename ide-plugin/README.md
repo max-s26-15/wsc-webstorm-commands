@@ -41,7 +41,7 @@ without the Debug tool, and custom commands from a preset) whenever the IDE list
 an optional content module of the terminal plugin that a plugin depending on the terminal plugin is not guaranteed
 to see, so expect to touch this after a WebStorm update.
 
-`list_running()`, `stop_run_configuration(configurationName)`, `restart_run_configuration(configurationName)`,
+`list_running()`, `stop_run_configuration(configurationName, mode?)`, `restart_run_configuration(configurationName, mode?)`,
 `stop_terminal_tab(kind, entryName)` and `restart_terminal_tab(kind, entryName, command)` (since 0.6.0) are what
 `wsc --stop` and `wsc --restart` stand on: the IDE's own MCP Server can neither say what is running nor stop it, and
 `wsc` keeps no record of what it launched — the IDE is the record. `list_running` answers JSON with `runs` (run

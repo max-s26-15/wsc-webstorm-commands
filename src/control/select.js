@@ -38,8 +38,10 @@ import { resolveName } from '../resolve.js';
  *   instances: Instance[],
  * }} ControlTarget
  *
- * @typedef {{ action: 'stop', target: ControlTarget, instance: Instance, relaunch: boolean }
- *   | { action: 'restart', target: ControlTarget, instance: Instance }
+ * One step acts on every tab of an entry in one place — the plugin's tools do, by name — so
+ * `instance` stands for all `count` of them.
+ * @typedef {{ action: 'stop', target: ControlTarget, instance: Instance, count: number, relaunch: boolean }
+ *   | { action: 'restart', target: ControlTarget, instance: Instance, count: number }
  *   | { action: 'launch', target: ControlTarget }} ControlStep
  */
 
@@ -236,29 +238,57 @@ function actualMode(instance) {
  * one of the presets in scope gives it; once none does, it is stopped where it runs and launched
  * anew in `mode` — after every other step, by the ordinary launch.
  *
+ * One step per place, not per tab: the plugin stops or restarts every tab of an entry it is
+ * named for, so a second call for the second tab would find it stopped — or restart it again.
+ *
  * @param {'stop' | 'restart'} action
  * @param {ControlTarget[]} targets
  * @returns {ControlStep[]}
+ * @throws {ControlError} for a restart that would type one command into Terminal tabs whose
+ *   inspector ports differ — two debuggers would then share a port
  */
 export function planControl(action, targets) {
-    if (action === 'stop') {
-        return targets.flatMap((target) =>
-            target.instances.map((instance) => ({ action: /** @type {const} */ ('stop'), target, instance, relaunch: false })),
-        );
-    }
-
     /** @type {ControlStep[]} */
     const steps = [];
     /** @type {ControlStep[]} */
     const launches = [];
     for (const target of targets) {
-        const changed = target.instances.some((instance) => !target.modes.includes(actualMode(instance)));
-        for (const instance of target.instances) {
-            steps.push(changed ? { action: 'stop', target, instance, relaunch: true } : { action: 'restart', target, instance });
+        const changed = action === 'restart' && target.instances.some((instance) => !target.modes.includes(actualMode(instance)));
+        for (const [instance, count] of places(target.instances)) {
+            if (action === 'restart' && !changed && instance.where === 'terminal') assertOnePort(target);
+            steps.push(action === 'restart' && !changed
+                ? { action: 'restart', target, instance, count }
+                : { action: 'stop', target, instance, count, relaunch: changed });
         }
         if (changed) launches.push({ action: 'launch', target });
     }
     return [...steps, ...launches];
+}
+
+/**
+ * @param {Instance[]} instances
+ * @returns {Map<Instance, number>} the first instance of each place, and how many run there
+ */
+function places(instances) {
+    /** @type {Map<Instance['where'], [Instance, number]>} */
+    const byWhere = new Map();
+    for (const instance of instances) {
+        const known = byWhere.get(instance.where);
+        byWhere.set(instance.where, known === undefined ? [instance, 1] : [known[0], known[1] + 1]);
+    }
+    return new Map(byWhere.values());
+}
+
+/** @param {ControlTarget} target */
+function assertOnePort(target) {
+    const ports = [...new Set(target.instances.flatMap((instance) => (instance.where === 'terminal' ? [instance.debugPort] : [])))];
+    if (ports.length < 2) return;
+    const count = target.instances.filter((instance) => instance.where === 'terminal').length;
+    throw new ControlError(
+        `"${target.name}" runs in ${count} Terminal tabs on different inspector ports ` +
+            `(${ports.map((port) => port ?? 'none').join(', ')}) — one command cannot restart them all; ` +
+            `stop it with wsc --stop ${target.name} and launch it again`,
+    );
 }
 
 /** @type {Record<Instance['where'], string>} */
@@ -277,7 +307,8 @@ export function formatControlPlan(steps) {
             const head = `${step.action.padEnd(7)}  ${step.target.name.padEnd(width)}  `;
             if (step.action === 'launch') return `${head}as ${step.target.mode}`;
             const note = step.action === 'stop' && step.relaunch ? `  (preset now says ${step.target.mode})` : '';
-            return `${head}${WHERE[step.instance.where]}${note}`;
+            const tabs = step.count > 1 ? ` ×${step.count}` : '';
+            return `${head}${WHERE[step.instance.where]}${tabs}${note}`;
         })
         .join('\n');
 }

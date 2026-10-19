@@ -194,6 +194,40 @@ describe('planControl', () => {
         ]);
     });
 
+    test('one step per kind of place, not per tab: the IDE acts on every tab of an entry at once', () => {
+        const tab = { entryName: 'web', kind: 'config', mode: 'run', commandRunning: true };
+        const running = { runs: [{ configurationName: 'web', mode: 'run' }, { configurationName: 'web', mode: 'run' }], terminals: [tab, tab] };
+        for (const action of /** @type {const} */ (['stop', 'restart'])) {
+            assert.deepEqual(planControl(action, targets({ name: 'web' }, running)).map((step) => [step.action, step.instance?.where, step.count]), [
+                [action, 'run', 2],
+                [action, 'terminal', 2],
+            ]);
+        }
+    });
+
+    test('a Run tab and a Debug tab of one configuration are two places', () => {
+        const { targets: both } = select({ dev: [{ name: 'web' }], debugging: [{ name: 'web', mode: 'debug' }] }, {
+            runs: [{ configurationName: 'web', mode: 'run' }, { configurationName: 'web', mode: 'debug' }],
+        });
+        assert.deepEqual(planControl('restart', both).map((step) => [step.action, step.instance?.where]), [
+            ['restart', 'run'],
+            ['restart', 'debug'],
+        ]);
+    });
+
+    test('restart: Terminal tabs of one entry on different inspector ports cannot share one command', () => {
+        const tab = { entryName: 'api', kind: 'config', mode: 'debug', commandRunning: true };
+        const running = { terminals: [{ ...tab, debugPort: 9229 }, { ...tab, debugPort: 9230 }] };
+        assert.throws(() => planControl('restart', targets({ name: 'api', mode: 'debug' }, running)), (err) => {
+            assert.ok(err instanceof ControlError);
+            assert.match(err.message, /"api" runs in 2 Terminal tabs on different inspector ports \(9229, 9230\)/);
+            assert.match(err.message, /wsc --stop api/);
+            return true;
+        });
+        // A stop needs no port.
+        assert.deepEqual(planControl('stop', targets({ name: 'api', mode: 'debug' }, running)).map((step) => step.action), ['stop']);
+    });
+
     test('restart: the same setup restarts in place', () => {
         const steps = planControl('restart', targets({ name: 'web' }, { runs: [{ configurationName: 'web', mode: 'run' }] }));
         assert.deepEqual(steps.map((step) => step.action), ['restart']);
@@ -247,6 +281,12 @@ describe('formatControlPlan', () => {
                 'launch   api  as debug',
             ].join('\n'),
         );
+    });
+
+    test('a step that covers several tabs says how many', () => {
+        const tab = { entryName: 'ngrok', kind: 'custom', mode: 'terminal', commandRunning: true };
+        const { targets } = select({ dev: [ngrok] }, { terminals: [tab, tab] });
+        assert.equal(formatControlPlan(planControl('stop', targets)), 'stop     ngrok  Terminal tab ×2');
     });
 
     test('says so when there is nothing to do', () => {

@@ -1,7 +1,12 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import { runControl } from '../src/control/run.js';
+import { shellQuote } from '../src/exec/planBuilder.js';
 import { RunningPayloadError } from '../src/mcp/control.js';
 import { McpToolError } from '../src/mcp/client.js';
 import { createLogger } from '../src/log.js';
@@ -114,7 +119,7 @@ describe('runControl — --stop', () => {
 
         assert.equal(result.code, 0);
         assert.deepEqual(controlCalls(result.calls), [
-            ['stop_run_configuration', { configurationName: 'web' }],
+            ['stop_run_configuration', { configurationName: 'web', mode: 'run' }],
             ['stop_terminal_tab', { kind: 'custom', entryName: 'ngrok' }],
         ]);
         assert.equal(result.stdout, 'stop     web    Run tab\nstop     ngrok  Terminal tab\n');
@@ -175,7 +180,7 @@ describe('runControl — --stop', () => {
         });
 
         assert.deepEqual(controlCalls(result.calls), [
-            ['stop_run_configuration', { configurationName: 'web' }],
+            ['stop_run_configuration', { configurationName: 'web', mode: 'run' }],
             ['stop_terminal_tab', { kind: 'config', entryName: 'web' }],
         ]);
         assert.match(result.stderr, /^stopping 1 preset entry:$/m);
@@ -187,7 +192,7 @@ describe('runControl — --restart', () => {
         const result = await control({ action: 'restart', running: { runs: [{ configurationName: 'web', mode: 'run' }], terminals: [] } });
 
         assert.equal(result.code, 0);
-        assert.deepEqual(controlCalls(result.calls), [['restart_run_configuration', { configurationName: 'web' }]]);
+        assert.deepEqual(controlCalls(result.calls), [['restart_run_configuration', { configurationName: 'web', mode: 'run' }]]);
         assert.match(result.stderr, /^restarted web$/m);
         assert.match(result.stderr, /^restarted 1 preset entry$/m);
     });
@@ -197,7 +202,7 @@ describe('runControl — --restart', () => {
         const result = await control({ action: 'restart', presets });
 
         assert.deepEqual(controlCalls(result.calls), [
-            ['restart_terminal_tab', { kind: 'custom', entryName: 'ngrok', command: 'ngrok http 9000 && echo up' }],
+            ['restart_terminal_tab', { kind: 'custom', entryName: 'ngrok', command: 'cd /nowhere && ngrok http 9000 && echo up' }],
         ]);
         // Announced like a launch announces it: this is shell text out of a file that may be committed.
         assert.match(result.stderr, /ngrok: ngrok http 9000 && echo up/);
@@ -221,6 +226,7 @@ describe('runControl — --restart', () => {
             assert.equal(tool, 'restart_terminal_tab');
             assert.deepEqual([args.kind, args.entryName], ['config', 'api']);
             assert.match(args.command, /--inspect-brk=127\.0\.0\.1:9301/);
+            assert.ok(args.command.startsWith(`cd ${shellQuote(project.dir)} && `), args.command);
         } finally {
             await project.cleanup();
         }
@@ -234,7 +240,7 @@ describe('runControl — --restart', () => {
         });
 
         assert.equal(result.code, 0, result.stderr);
-        assert.deepEqual(controlCalls(result.calls), [['stop_run_configuration', { configurationName: 'web' }]]);
+        assert.deepEqual(controlCalls(result.calls), [['stop_run_configuration', { configurationName: 'web', mode: 'run' }]]);
         assert.equal(result.launched.length, 1);
         assert.deepEqual(result.launched[0].plan.map((entry) => `${entry.name}:${entry.mode}`), ['web:debug']);
         assert.deepEqual(result.launched[0].calls.map((call) => call.tool), ['debug_run_configuration']);
@@ -296,8 +302,31 @@ describe('runControl — --restart', () => {
         });
 
         assert.equal(result.code, 1);
-        assert.match(result.stderr, /"api" is not running — start it with `wsc api`/);
-        assert.deepEqual(controlCalls(result.calls), [['restart_run_configuration', { configurationName: 'web' }]]);
+        // `wsc api` would launch the default preset beside it: the duplicates --restart exists to avoid.
+        assert.match(result.stderr, /"api" is not running — --restart only restarts what runs; start it in WebStorm/);
+        assert.doesNotMatch(result.stderr, /`wsc api`/);
+        assert.deepEqual(controlCalls(result.calls), [['restart_run_configuration', { configurationName: 'web', mode: 'run' }]]);
+    });
+
+    test('a custom command that is not running names its preset, quoted, and says the whole preset starts', async () => {
+        const result = await control({
+            action: 'restart',
+            tokens: ['ngrok'],
+            presets: { 'my dev': PRESETS.dev },
+            running: { runs: [], terminals: [] },
+        });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /"ngrok" is not running — --restart only restarts what runs; it starts only with its whole preset: wsc --preset 'my dev'/);
+    });
+
+    test('an entry in two Terminal tabs is restarted with one call: the plugin restarts every tab of it', async () => {
+        const tab = { entryName: 'ngrok', kind: 'custom', mode: 'terminal', commandRunning: true };
+        const result = await control({ action: 'restart', running: { runs: [], terminals: [tab, tab] } });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.deepEqual(controlCalls(result.calls).map(([name]) => name), ['restart_terminal_tab']);
+        assert.match(result.stderr, /^restarted 1 preset entry$/m);
     });
 
     test('--dry-run restarts and launches nothing', async () => {
@@ -329,5 +358,32 @@ describe('runControl — --restart', () => {
     test('...unless the user promised a POSIX terminal', async () => {
         const result = await control({ action: 'restart', platform: 'win32', env: { WSC_POSIX_TERMINAL: '1' } });
         assert.equal(result.code, 0, result.stderr);
+    });
+});
+
+describe('runControl — a restart types into a shell the command has moved', () => {
+    test('the command starts from the project root, so its own `cd` works the second time too', async () => {
+        // A space in the path, so the cd has to be quoted to work at all.
+        const root = await mkdtemp(path.join(os.tmpdir(), 'wsc restart '));
+        try {
+            await mkdir(path.join(root, 'web'));
+            const commands = ['cd web', 'echo up >> started.log'];
+            const result = await control({
+                action: 'restart',
+                projectRoot: root,
+                presets: { dev: [{ name: 'srv', mode: 'terminal', commands }] },
+                running: { runs: [], terminals: [{ entryName: 'srv', kind: 'custom', mode: 'terminal', commandRunning: true }] },
+            });
+            assert.equal(result.code, 0, result.stderr);
+            const [[, args]] = controlCalls(result.calls);
+
+            // The tab's shell as a launch leaves it: opened in the project root, then moved by the
+            // command itself — and a restart types into that same shell, twice here.
+            const launched = commands.join(' && ');
+            execFileSync('/bin/sh', ['-c', `cd ${shellQuote(root)} && ${launched}; ${args.command}; ${args.command}; true`], { stdio: 'ignore' });
+            assert.equal(await readFile(path.join(root, 'web', 'started.log'), 'utf8'), 'up\nup\nup\n');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     });
 });

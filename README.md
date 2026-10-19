@@ -309,7 +309,8 @@ by hand stays stopped, and nothing is launched twice.
 - The mode comes from the preset, so `wsc --restart web:debug` is refused. `--dry-run` shows what
   would be stopped, restarted or launched, and touches nothing.
 - A named entry that is not running is already stopped for `--stop`, and an error for `--restart`,
-  which does not start what is stopped (`wsc web` does).
+  which does not start what is stopped. Start a configuration in WebStorm; a custom command starts only
+  with its whole preset. (`wsc web` would also launch your default preset beside it.)
 
 The blocks below were captured with these two presets launched together (`wsc --preset dev tools`);
 by then `test:coverage` had finished, so it is not running and not restarted:

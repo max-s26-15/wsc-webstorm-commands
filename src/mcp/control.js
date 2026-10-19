@@ -7,10 +7,10 @@
 /** What is running: Run/Debug tabs with a live process, and the Terminal tabs wsc marked. */
 export const LIST_RUNNING_TOOL = 'list_running';
 
-/** The Stop button for every live process of a run configuration. */
+/** The Stop button for every live process of a run configuration in one tool window. */
 export const STOP_RUN_TOOL = 'stop_run_configuration';
 
-/** The Rerun button: the same Run or Debug tab, the same executor. */
+/** The Rerun button for every such process: the same Run or Debug tab, the same executor. */
 export const RESTART_RUN_TOOL = 'restart_run_configuration';
 
 /** Ctrl-C in the Terminal tab marked for a preset entry. */
@@ -98,18 +98,20 @@ export function parseRunning(payload) {
 
 /**
  * @param {string} configurationName - exactly as get_run_configurations reported it
+ * @param {'run' | 'debug'} mode - only the processes in that tool window
  * @returns {ToolCall}
  */
-export function stopRunCall(configurationName) {
-    return { tool: STOP_RUN_TOOL, arguments: { configurationName } };
+export function stopRunCall(configurationName, mode) {
+    return { tool: STOP_RUN_TOOL, arguments: { configurationName, mode } };
 }
 
 /**
  * @param {string} configurationName - exactly as get_run_configurations reported it
+ * @param {'run' | 'debug'} mode - only the processes in that tool window
  * @returns {ToolCall}
  */
-export function restartRunCall(configurationName) {
-    return { tool: RESTART_RUN_TOOL, arguments: { configurationName } };
+export function restartRunCall(configurationName, mode) {
+    return { tool: RESTART_RUN_TOOL, arguments: { configurationName, mode } };
 }
 
 /**

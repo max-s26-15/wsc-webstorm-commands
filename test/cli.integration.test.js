@@ -981,7 +981,7 @@ describe('flag table — --stop', () => {
         const result = await wsc(['--stop', '--preset', 'docs'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
 
         assert.equal(result.code, 0);
-        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'docs' }]]);
+        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'docs', mode: 'run' }]]);
     });
 
     test('a name narrows it to one entry', async () => {
@@ -1040,7 +1040,7 @@ describe('flag table — --restart', () => {
         const result = await wsc(['--restart', '--preset', 'dev', 'web'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
 
         assert.equal(result.code, 0, result.stderr);
-        assert.deepEqual(controlled(result), [['restart_run_configuration', { configurationName: 'web' }]]);
+        assert.deepEqual(controlled(result), [['restart_run_configuration', { configurationName: 'web', mode: 'run' }]]);
     });
 
     test('an entry whose preset now says debug goes through the ordinary launch', async () => {
@@ -1048,7 +1048,7 @@ describe('flag table — --restart', () => {
         const result = await wsc(['--restart'], { config, deps: ideWith(ALL_RUNNING) });
 
         assert.equal(result.code, 0, result.stderr);
-        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'web' }]]);
+        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'web', mode: 'run' }]]);
         assert.deepEqual(launched(result), ['web:debug']);
     });
 

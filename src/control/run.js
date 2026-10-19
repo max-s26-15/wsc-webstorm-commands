@@ -8,7 +8,7 @@
  */
 import { customCommandLine, announceCustomCommands } from '../exec/customCommands.js';
 import { ideaCommandResolver } from '../exec/ideaCommands.js';
-import { DEFAULT_TARGET, buildExecutionPlan, needsTerminalCommands } from '../exec/planBuilder.js';
+import { DEFAULT_TARGET, buildExecutionPlan, needsTerminalCommands, shellQuote } from '../exec/planBuilder.js';
 import { assertPosixTerminal } from '../exec/terminalShell.js';
 import { DEBUG_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL } from '../mcp/execute.js';
 import {
@@ -102,7 +102,7 @@ export async function runControl(ctx) {
     // comes before the first entry is stopped.
     const commandFor = lazyCommandFor(ctx);
     const restartCalls = new Map(await Promise.all(
-        steps.flatMap((step) => (step.action === 'restart' ? [restartCall(step, commandFor).then((call) => /** @type {const} */ ([step, call]))] : [])),
+        steps.flatMap((step) => (step.action === 'restart' ? [restartCall(step, commandFor, ctx.projectRoot).then((call) => /** @type {const} */ ([step, call]))] : [])),
     ));
     const launchTargets = steps.flatMap((step) => (step.action === 'launch' ? [step.target] : []));
     const launch = launchTargets.length > 0 ? await buildLaunch(launchTargets, configs, ctx, commandFor) : null;
@@ -176,18 +176,25 @@ function lazyCommandFor(ctx) {
  * own commands joined, or a configuration's command line out of `.idea/` — in the mode its tab
  * was marked with and on the inspector port it already had, so "Attach" keeps working.
  *
+ * Both are written to be typed into a shell opened in the project root, and the tab's shell is no
+ * longer there: the launch typed `cd web && npm run dev` into it, and that `cd` stayed. So the
+ * command goes back to the root first — without it `cd web` fails in `web/`, `&&` stops there, and
+ * the tab sits at a prompt while the restart reads as done.
+ *
  * @param {ControlStep & { action: 'restart' }} step
  * @param {() => Promise<CommandFor>} commandFor
+ * @param {string} projectRoot
  * @returns {Promise<ToolCall>}
  */
-async function restartCall(step, commandFor) {
+async function restartCall(step, commandFor, projectRoot) {
     const { target, instance } = step;
-    if (instance.where !== 'terminal') return restartRunCall(target.name);
-    if (target.kind === 'custom') return restartTerminalCall('custom', target.name, customCommandLine(target.commands ?? []));
+    if (instance.where !== 'terminal') return restartRunCall(target.name, instance.where);
+    const fromRoot = (/** @type {string} */ command) => `cd ${shellQuote(projectRoot)} && ${command}`;
+    if (target.kind === 'custom') return restartTerminalCall('custom', target.name, fromRoot(customCommandLine(target.commands ?? [])));
 
     const entry = { name: target.name, mode: instance.mode, config: /** @type {RunConfigInfo} */ (target.config), source: /** @type {const} */ ('preset') };
     const built = (await commandFor())(entry, instance.debugPort === undefined ? {} : { debugPort: instance.debugPort });
-    return restartTerminalCall('config', target.name, built.command);
+    return restartTerminalCall('config', target.name, fromRoot(built.command));
 }
 
 /**
@@ -235,16 +242,18 @@ function requirePlugin(action, tools) {
 }
 
 /**
- * How to start an entry that is not running: a configuration by name, a custom command only
- * through its preset — the command line has no way to name one for a launch.
+ * How to start an entry that is not running. Never `wsc <name>`: that launches the default preset
+ * beside it, and with the rest of the preset still running that is the duplicate --restart exists
+ * to avoid. A configuration starts in the IDE alone; a custom command has no way to but its preset.
  *
  * @param {ControlTarget} target
  * @returns {string}
  */
 function startHint(target) {
+    const why = '--restart only restarts what runs';
     return target.kind === 'config'
-        ? `start it with \`wsc ${target.name}\``
-        : `it starts with its preset: wsc --preset ${target.presets[0]}`;
+        ? `${why}; start it in WebStorm`
+        : `${why}; it starts only with its whole preset: wsc --preset ${shellQuote(target.presets[0])}`;
 }
 
 /**
@@ -254,7 +263,7 @@ function startHint(target) {
 function stopCall(step) {
     return step.instance.where === 'terminal'
         ? stopTerminalCall(step.target.kind, step.target.name)
-        : stopRunCall(step.target.name);
+        : stopRunCall(step.target.name, step.instance.where);
 }
 
 /**

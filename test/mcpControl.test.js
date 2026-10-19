@@ -75,9 +75,9 @@ describe('parseRunning', () => {
 });
 
 describe('control calls', () => {
-    test('a run configuration is named the way the IDE names it', () => {
-        assert.deepEqual(stopRunCall('web'), { tool: STOP_RUN_TOOL, arguments: { configurationName: 'web' } });
-        assert.deepEqual(restartRunCall('web'), { tool: RESTART_RUN_TOOL, arguments: { configurationName: 'web' } });
+    test('a run configuration is named the way the IDE names it, with the tool window it runs in', () => {
+        assert.deepEqual(stopRunCall('web', 'run'), { tool: STOP_RUN_TOOL, arguments: { configurationName: 'web', mode: 'run' } });
+        assert.deepEqual(restartRunCall('web', 'debug'), { tool: RESTART_RUN_TOOL, arguments: { configurationName: 'web', mode: 'debug' } });
     });
 
     test('a Terminal tab is named by the mark it carries', () => {

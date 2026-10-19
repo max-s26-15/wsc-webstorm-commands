@@ -500,6 +500,16 @@ exercises it.
   only once acted on. `stop_run_configuration` / `stop_terminal_tab` answer "is not running" instead of
   failing, so one configuration running in a Run tab *and* a Terminal tab can take two stops.
   `ControlError` and `RunningPayloadError` are in `KNOWN_ERRORS`.
+  **One call per place, not per tab** (`places()` in `planControl()`): every plugin tool acts on *all* tabs
+  of the entry it names — the terminal ones by mark, the run ones by name plus `mode` (`run`|`debug`, so a
+  Run tab and a Debug tab of one configuration are two steps) — so a per-tab call stopped both tabs, then
+  found nothing running and reported a false failure (an entry launched twice is exactly the duplicate this
+  feature exists for). Terminal tabs of one entry on different inspector ports cannot share one restart
+  command and are a `ControlError` before anything is touched. **A restart command starts with
+  `cd <projectRoot> &&`**: it is typed into the tab's *same* interactive shell, which the launch's own
+  `cd web && npm run dev` left in `web/`, so without it the second `cd web` fails, `&&` stops, and the
+  plugin still answers "sent" — pinned by running launch + restart + restart through one `/bin/sh`. The
+  not-running hint never says `wsc <name>`: a positional launches `defaultPreset` beside it.
 - **Terminal commands are reconstructed from the IDE's naming convention**, because
   `get_run_configurations` reports only `name` and `description`. WebStorm names an npm configuration after
   its script, prefixed with the package.json directory when it is not the project root (`client > bundle:build`
