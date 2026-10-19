@@ -23,13 +23,15 @@ import { resolveName } from '../resolve.js';
  * was launched in and its inspector port, when it has one.
  * @typedef {{ where: 'run' | 'debug' } | { where: 'terminal', mode: LaunchMode, debugPort?: number }} Instance
  *
- * A preset entry and everywhere it runs. `mode` is its setup: the mode the current preset gives
- * it. `config` is set for a run configuration (as resolveName() found it), `commands` for the
- * user's own commands.
+ * A preset entry and everywhere it runs. `modes` is its setup: every mode the presets in scope
+ * give it — two presets may disagree, and running in either one is running as set up. `mode` is
+ * the one a relaunch uses (the last, as buildLaunchPlan() would pick). `config` is set for a run
+ * configuration (as resolveName() found it), `commands` for the user's own commands.
  * @typedef {{
  *   kind: EntryKind,
  *   name: string,
  *   mode: LaunchMode,
+ *   modes: LaunchMode[],
  *   config?: RunConfigInfo,
  *   commands?: string[],
  *   presets: string[],
@@ -119,7 +121,7 @@ function collectEntries(config, presetNames, configs) {
                 const key = JSON.stringify(['custom', entry.name]);
                 const known = entries.get(key);
                 if (known === undefined) {
-                    entries.set(key, { kind: 'custom', name: entry.name, mode: 'terminal', commands, presets: [preset], instances: [] });
+                    entries.set(key, { kind: 'custom', name: entry.name, mode: 'terminal', modes: ['terminal'], commands, presets: [preset], instances: [] });
                     continue;
                 }
                 addPreset(known, preset);
@@ -140,10 +142,13 @@ function collectEntries(config, presetNames, configs) {
             const key = JSON.stringify(['config', resolved.name]);
             const known = entries.get(key);
             if (known === undefined) {
-                entries.set(key, { kind: 'config', name: resolved.name, mode: entry.mode, config: resolved, presets: [preset], instances: [] });
+                entries.set(key, { kind: 'config', name: resolved.name, mode: entry.mode, modes: [entry.mode], config: resolved, presets: [preset], instances: [] });
             } else {
-                // First position, last mode — buildLaunchPlan()'s rule for two presets at once.
+                // First position, last mode — buildLaunchPlan()'s rule for two presets at once —
+                // but every mode counts as its setup: `wsc --preset dev` then a bare `wsc --restart`
+                // must not move an entry just because another preset debugs it.
                 known.mode = entry.mode;
+                if (!known.modes.includes(entry.mode)) known.modes.push(entry.mode);
                 addPreset(known, preset);
             }
         }
@@ -227,9 +232,9 @@ function actualMode(instance) {
 /**
  * What to do, in order.
  *
- * A stop acts on every place the entry runs. A restart does so in place while the entry's setup
- * is the one it runs with; once the preset gives it another mode, it is stopped where it runs and
- * launched anew — after every other step, by the ordinary launch.
+ * A stop acts on every place the entry runs. A restart does so in place while it runs in a mode
+ * one of the presets in scope gives it; once none does, it is stopped where it runs and launched
+ * anew in `mode` — after every other step, by the ordinary launch.
  *
  * @param {'stop' | 'restart'} action
  * @param {ControlTarget[]} targets
@@ -247,7 +252,7 @@ export function planControl(action, targets) {
     /** @type {ControlStep[]} */
     const launches = [];
     for (const target of targets) {
-        const changed = target.instances.some((instance) => actualMode(instance) !== target.mode);
+        const changed = target.instances.some((instance) => !target.modes.includes(actualMode(instance)));
         for (const instance of target.instances) {
             steps.push(changed ? { action: 'stop', target, instance, relaunch: true } : { action: 'restart', target, instance });
         }

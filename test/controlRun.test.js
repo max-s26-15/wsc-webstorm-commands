@@ -39,6 +39,7 @@ const WEB_AND_NGROK = {
  * @param {string} [opts.platform]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {number} [opts.debugPortBase]
+ * @param {number} [opts.launchCode] - what the ordinary launch exits with
  */
 async function control(opts = {}) {
     const stdout = fakeStream();
@@ -75,7 +76,7 @@ async function control(opts = {}) {
             : async () => { throw new Error('.idea/ must not be read'); },
         launch: async (plan, launchCalls) => {
             launched.push({ plan, calls: launchCalls });
-            return 0;
+            return opts.launchCode ?? 0;
         },
     });
 
@@ -250,6 +251,20 @@ describe('runControl — --restart', () => {
         assert.equal(result.code, 1);
         assert.deepEqual(result.launched, []);
         assert.match(result.stderr, /restarted 0 of 1 — failed: web/);
+    });
+
+    test('a relaunch that fails is counted in the summary, not reported as a restart', async () => {
+        const stdout = [];
+        const result = await control({
+            action: 'restart',
+            presets: { dev: [{ name: 'web', mode: 'debug' }, { name: 'api' }] },
+            running: { runs: [{ configurationName: 'web', mode: 'run' }, { configurationName: 'api', mode: 'run' }], terminals: [] },
+            launchCode: 1,
+        });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /restarted 1 of 2 — failed: web/);
+        assert.doesNotMatch(result.stderr, /^restarted 2 preset entries$/m);
     });
 
     test('--debug-port places the inspector of an entry launched anew through the terminal', async () => {

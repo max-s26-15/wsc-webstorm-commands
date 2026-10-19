@@ -45,31 +45,38 @@ class WscControlToolset : McpToolset {
     suspend fun list_running(): String {
         val project = currentCoroutineContext().project
 
-        // Both halves read UI state, which the IDE keeps on the EDT.
-        return withContext(Dispatchers.EDT) {
-            buildJsonObject {
-                putJsonArray("runs") {
-                    for (descriptor in liveDescriptors(project)) {
-                        addJsonObject {
-                            put("configurationName", descriptor.runConfigurationName)
-                            put("mode", if (isDebug(project, descriptor)) "debug" else "run")
-                        }
-                    }
-                }
-                putJsonArray("terminals") {
-                    for (widget in TerminalToolWindowManager.getInstance(project).terminalWidgets) {
-                        val mark = TabMarks.get(widget) ?: continue
-                        addJsonObject {
-                            put("entryName", mark.entryName)
-                            put("kind", mark.kind)
-                            put("mode", mark.mode)
-                            mark.debugPort?.let { put("debugPort", it) }
-                            put("commandRunning", widget.isCommandRunning())
-                        }
-                    }
-                }
-            }.toString()
+        // The tabs and the run descriptors are UI state, read on the EDT.
+        val (runs, marked) = withContext(Dispatchers.EDT) {
+            val runs = liveDescriptors(project).map { it.runConfigurationName to isDebug(project, it) }
+            val marked = TerminalToolWindowManager.getInstance(project).terminalWidgets
+                .mapNotNull { widget -> TabMarks.get(widget)?.let { widget to it } }
+            runs to marked
         }
+        // Never on the EDT: isCommandRunning() asserts a background thread and may inspect the
+        // process tree (`ps`) or show a modal progress to do it.
+        val terminals = withContext(Dispatchers.IO) { marked.map { (widget, mark) -> mark to widget.isCommandRunning() } }
+
+        return buildJsonObject {
+            putJsonArray("runs") {
+                for ((name, debug) in runs) {
+                    addJsonObject {
+                        put("configurationName", name)
+                        put("mode", if (debug) "debug" else "run")
+                    }
+                }
+            }
+            putJsonArray("terminals") {
+                for ((mark, running) in terminals) {
+                    addJsonObject {
+                        put("entryName", mark.entryName)
+                        put("kind", mark.kind)
+                        put("mode", mark.mode)
+                        mark.debugPort?.let { put("debugPort", it) }
+                        put("commandRunning", running)
+                    }
+                }
+            }
+        }.toString()
     }
 
     @McpTool(name = "stop_run_configuration")

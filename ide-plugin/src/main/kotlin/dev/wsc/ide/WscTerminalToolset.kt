@@ -93,8 +93,9 @@ class WscTerminalToolset : McpToolset {
     @McpDescription(
         """
         |Restart the command running in the Terminal tabs `open_terminal_tab` marked with this kind and entry name: press
-        |Ctrl-C, wait for it to stop, then type `command` into the same tab. If it does not stop within 5 seconds,
-        |nothing is typed — that would start a second copy beside the first.
+        |Ctrl-C, wait for it to stop, then send `command` to the same tab. If it does not stop within 5 seconds,
+        |nothing is sent — that would start a second copy beside the first. The answer confirms the command was sent,
+        |not that the shell accepted it: a line the user left half-typed in the tab can make the IDE drop it.
         """,
     )
     suspend fun restart_terminal_tab(
@@ -105,7 +106,7 @@ class WscTerminalToolset : McpToolset {
         val stopped = interrupt(currentCoroutineContext().project, kind, entryName)
         if (stopped.isEmpty()) throw fail("\"$entryName\" is not running in a Terminal tab, so there is nothing to restart")
         withContext(Dispatchers.EDT) { stopped.forEach { it.sendCommandToExecute(command) } }
-        return "restarted \"$entryName\""
+        return "stopped \"$entryName\" and sent its command again"
     }
 
     /**
@@ -115,20 +116,22 @@ class WscTerminalToolset : McpToolset {
     private suspend fun interrupt(project: Project, kind: String, entryName: String): List<TerminalWidget> {
         if (kind !in TabMarks.KINDS) throw fail("kind must be one of ${TabMarks.KINDS}, got $kind")
 
-        // The widgets are UI state, read and written on the EDT like everywhere else here.
-        val running = withContext(Dispatchers.EDT) {
+        // The widgets are UI state, read on the EDT …
+        val marked = withContext(Dispatchers.EDT) {
             TerminalToolWindowManager.getInstance(project).terminalWidgets
                 .filter { widget -> TabMarks.get(widget)?.let { it.kind == kind && it.entryName == entryName } == true }
-                .filter { it.isCommandRunning() }
-                .onEach { widget ->
-                    val tty = widget.ttyConnector ?: throw fail("the Terminal tab of \"$entryName\" has no terminal connected")
-                    tty.write(CTRL_C)
-                }
         }
+        // … but isCommandRunning() must never run there: it asserts a background thread and may
+        // inspect the process tree or show a modal progress to answer.
+        val running = withContext(Dispatchers.IO) { marked.filter { it.isCommandRunning() } }
         if (running.isEmpty()) return running
 
+        // Every tab is checked before any gets a Ctrl-C, so a failure here interrupts nothing.
+        val ttys = running.map { it.ttyConnector ?: throw fail("the Terminal tab of \"$entryName\" has no terminal connected") }
+        withContext(Dispatchers.EDT) { ttys.forEach { it.write(CTRL_C) } }
+
         withTimeoutOrNull(STOP_TIMEOUT_MS) {
-            while (withContext(Dispatchers.EDT) { running.any { it.isCommandRunning() } }) delay(POLL_MS)
+            while (withContext(Dispatchers.IO) { running.any { it.isCommandRunning() } }) delay(POLL_MS)
         } ?: throw fail(
             "\"$entryName\" did not stop on Ctrl-C within ${STOP_TIMEOUT_MS / 1000}s — it is still running in its Terminal tab",
         )

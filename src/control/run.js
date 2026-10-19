@@ -144,6 +144,9 @@ export async function runControl(ctx) {
             ? launch
             : await buildLaunch(relaunch, configs, ctx, commandFor);
         launchCode = await ctx.launch(ready.plan, ready.calls);
+        // The launch reports its own failures, by name; here they are restarts that did not happen,
+        // and the closing line must not count them as done.
+        if (launchCode !== 0) for (const target of relaunch) failed.add(target);
     }
 
     const reported = report(action === 'stop' ? 'stopped' : 'restarted', targets, failed, log);

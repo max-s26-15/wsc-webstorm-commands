@@ -206,6 +206,13 @@ describe('planControl', () => {
         assert.deepEqual(steps.map((step) => step.action), ['restart']);
     });
 
+    test('restart: an entry two presets give different modes stays where it runs, if it runs in either', () => {
+        const { targets: both } = select({ dev: [{ name: 'web' }], debugging: [{ name: 'web', mode: 'debug' }] }, {
+            runs: [{ configurationName: 'web', mode: 'run' }],
+        });
+        assert.deepEqual(planControl('restart', both).map((step) => step.action), ['restart']);
+    });
+
     test('restart: a custom command always restarts in place', () => {
         const steps = planControl('restart', targets(ngrok, {
             terminals: [{ entryName: 'ngrok', kind: 'custom', mode: 'terminal', commandRunning: true }],
