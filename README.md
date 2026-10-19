@@ -397,10 +397,30 @@ new IDE **Terminal tab titled with the entry's name**, the same tab kind `:termi
 so the series stops at the first one that fails, and the tab stays open with the output. Each command is
 shell text, run as written — `cd server && npm run seed` is how a command picks its directory.
 
-`wsc -c` adds one: after the checkbox list it asks `Add a custom command?`, then a name, then the
-commands one at a time (an empty line ends the list; the first one is required). An existing custom
-entry shows in the checkbox as `⌘ seed db — npm i && npm run seed`, and unchecking it removes it. A
-name cannot be the name of a run configuration, or of another custom command in the same preset.
+Custom commands are managed in the `wsc -c` list itself. A custom entry shows there as
+`⌘ seed db — npm i && npm run seed`, after the run configurations, and two keys work beside the usual
+ones:
+
+- `n` adds one: a name, then the commands one at a time (an empty line ends the list). It comes back
+  checked, under the cursor.
+- `e`, with the cursor on a custom entry, opens its menu: rename it, change, move or delete one of its
+  commands, add a command at the end, or delete the whole entry. Deleting unchecks it and leaves it in
+  the list, so space brings it back.
+
+An empty answer to any of those questions goes back without changing anything — an empty name or
+first command adds nothing, an empty new command adds nothing, an empty rename or change keeps what
+was there. `INQUIRER_KEYBINDINGS=vim` (`j`/`k`) and `=emacs` (`Ctrl-N`/`Ctrl-P`) move through the list
+as they do in every other `@inquirer` prompt.
+
+Unchecking a custom entry removes it too; changing an unchecked one with `e` checks it again. A name
+cannot be the name of a run configuration, or of another custom command in the same preset. An edited
+entry keeps its place in the preset, and nothing is written until Enter submits the list, so Ctrl-C
+still leaves the file as it was. The summary names what changed:
+
+```
+  ~ seed db: renamed to seed
+  ~ seed: npm i && npm run seed → npm ci && npm run seed
+```
 
 The commands are always printed on stderr before anything starts, under `custom commands from the
 preset:` — as a warning, so that even `WSC_LOG_LEVEL=warn` leaves them visible. The preset file lives in `.idea/` and is usually committed, so a repository you have just

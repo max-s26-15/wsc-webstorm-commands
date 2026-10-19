@@ -7,9 +7,25 @@ import {
     DEFAULT_MODE,
     applyAnswersToPreset,
     buildInitialSelection,
+    commandEditChoices,
     customChoiceValue,
+    customNamesInUse,
     diffPreset,
+    editCommands,
+    addCustomEntry,
+    applyEntryEdit,
+    customDraft,
+    entryEditChoices,
+    newChoiceIndex,
+    fitLine,
+    focusAfter,
+    newChoiceValue,
+    pageSizeFor,
     pendingModeQuestions,
+    screenChoices,
+    splitSelection,
+    takenNames,
+    validateCustomCommand,
     validateCustomName,
 } from '../src/ui/configureLogic.js';
 
@@ -253,7 +269,7 @@ describe('custom command entries — the checkbox and what it saves', () => {
         assert.equal(choices.length, 14);
         assert.deepEqual(choices[13], {
             name: '⌘ seed db — npm i && npm run seed',
-            value: customChoiceValue('seed db'),
+            value: customChoiceValue(0),
             checked: true,
             mode: 'terminal',
         });
@@ -270,12 +286,12 @@ describe('custom command entries — the checkbox and what it saves', () => {
 
     test('pendingModeQuestions never asks about a custom choice, nor mistakes its name for a known configuration', () => {
         const preset = [{ ...custom, name: 'web' }];
-        assert.deepEqual(pendingModeQuestions([customChoiceValue('web'), 'web'], preset), ['web']);
+        assert.deepEqual(pendingModeQuestions([customChoiceValue(0), 'web'], preset), ['web']);
     });
 
     test('a checked custom entry keeps its place and its commands', () => {
         const preset = [{ name: 'web', mode: 'run' }, custom, { name: 'api', mode: 'run' }];
-        const after = applyAnswersToPreset(['web', customChoiceValue('seed db'), 'api'], {}, preset);
+        const after = applyAnswersToPreset(['web', customChoiceValue(1), 'api'], {}, preset);
         assert.deepEqual(after, preset);
     });
 
@@ -350,5 +366,437 @@ describe('validateCustomName', () => {
     test('a prototype member is an ordinary name', () => {
         assert.equal(validateCustomName('constructor', opts), null);
         assert.equal(validateCustomName('__proto__', opts), null);
+    });
+
+    test('a name the entry may keep is accepted even if a run configuration has it too', () => {
+        // A hand-edited file can hold a custom entry called like a configuration.
+        assert.equal(validateCustomName('web', { ...opts, keep: ['web'] }), null);
+        assert.equal(validateCustomName(' web ', { ...opts, keep: ['web'] }), null);
+        assert.equal(validateCustomName('', { ...opts, keep: [''] }), 'a name is required');
+    });
+});
+
+describe('validateCustomCommand', () => {
+    test('accepts an ordinary line, pipes and tabs included', () => {
+        assert.equal(validateCustomCommand('npm run a | tee log'), null);
+        assert.equal(validateCustomCommand('printf "a\tb"'), null);
+    });
+
+    test('refuses a blank line', () => {
+        assert.equal(validateCustomCommand(''), 'a command is required');
+        assert.equal(validateCustomCommand('   '), 'a command is required');
+    });
+
+    test('refuses a control character, which the store would refuse on the next read', () => {
+        for (const line of ['a\nb', 'a\u001b[2Jb', 'a\u0000b', 'a\u007fb', 'a\u0085b']) {
+            assert.equal(validateCustomCommand(line), 'a command cannot contain control characters', JSON.stringify(line));
+        }
+    });
+});
+
+describe('editCommands', () => {
+    const commands = ['npm i', 'npm run build', 'npm run seed'];
+
+    test('replace changes one line in place', () => {
+        assert.deepEqual(editCommands(commands, { type: 'replace', index: 1, line: 'npm ci' }), [
+            'npm i', 'npm ci', 'npm run seed',
+        ]);
+    });
+
+    test('up and down swap a line with its neighbour', () => {
+        assert.deepEqual(editCommands(commands, { type: 'up', index: 1 }), ['npm run build', 'npm i', 'npm run seed']);
+        assert.deepEqual(editCommands(commands, { type: 'down', index: 1 }), ['npm i', 'npm run seed', 'npm run build']);
+    });
+
+    test('a move past either end changes nothing', () => {
+        assert.deepEqual(editCommands(commands, { type: 'up', index: 0 }), commands);
+        assert.deepEqual(editCommands(commands, { type: 'down', index: 2 }), commands);
+    });
+
+    test('remove drops one line, append adds one at the end', () => {
+        assert.deepEqual(editCommands(commands, { type: 'remove', index: 0 }), ['npm run build', 'npm run seed']);
+        assert.deepEqual(editCommands(commands, { type: 'append', line: 'echo done' }), [...commands, 'echo done']);
+    });
+
+    test('the last line is never removed: an entry without commands would not load', () => {
+        assert.deepEqual(editCommands(['npm i'], { type: 'remove', index: 0 }), ['npm i']);
+    });
+
+    test('does not mutate the list it was given', () => {
+        const copy = [...commands];
+        editCommands(copy, { type: 'up', index: 2 });
+        editCommands(copy, { type: 'remove', index: 0 });
+        assert.deepEqual(copy, commands);
+    });
+});
+
+describe('editing custom entries — the menus', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+
+    test('entryEditChoices: the name, each command, add, delete, done — done last', () => {
+        assert.deepEqual(entryEditChoices(seed), [
+            { name: 'Name: seed db', value: 'name' },
+            { name: '1. npm i', value: 0 },
+            { name: '2. npm run seed', value: 1 },
+            { name: '+ Add a command', value: 'append' },
+            { name: 'Delete "seed db" from the preset (unchecks it)', value: 'delete' },
+            { name: 'Done', value: 'done' },
+        ]);
+    });
+
+    test('commandEditChoices disables what cannot be done to that line, back last', () => {
+        assert.deepEqual(commandEditChoices(['a', 'b'], 0), [
+            { name: 'Change', value: 'replace' },
+            { name: 'Move up', value: 'up', disabled: '(already the first)' },
+            { name: 'Move down', value: 'down', disabled: false },
+            { name: 'Delete', value: 'remove', disabled: false },
+            { name: 'Back', value: 'back' },
+        ]);
+        const last = commandEditChoices(['a', 'b'], 1);
+        assert.equal(last[1].disabled, false);
+        assert.equal(last[2].disabled, '(already the last)');
+    });
+
+    test('the only command cannot be deleted; the entry can', () => {
+        const [, up, down, remove] = commandEditChoices(['a'], 0);
+        assert.ok(up.disabled && down.disabled);
+        assert.equal(remove.disabled, '(the only command — delete the whole entry instead)');
+    });
+});
+
+describe('customNamesInUse', () => {
+    const preset = [
+        { name: 'web', mode: 'run' },
+        { name: 'a', mode: 'terminal', commands: ['x'] },
+        { name: 'b', mode: 'terminal', commands: ['x'] },
+    ];
+
+    test('every custom name the preset had, never a configuration', () => {
+        assert.deepEqual(customNamesInUse(preset).sort(), ['a', 'b']);
+    });
+
+    test('an entry renamed on this screen holds both its names', () => {
+        const edits = new Map([[customChoiceValue(1), { name: 'c', commands: ['x'] }]]);
+        assert.deepEqual(customNamesInUse(preset, edits).sort(), ['a', 'b', 'c']);
+    });
+
+    test('the entry being renamed does not stand in its own way', () => {
+        const edits = new Map([[customChoiceValue(1), { name: 'c', commands: ['x'] }]]);
+        assert.deepEqual(customNamesInUse(preset, edits, customChoiceValue(1)), ['b']);
+    });
+
+    test('prototype members are ordinary names', () => {
+        const odd = [{ name: '__proto__', mode: 'terminal', commands: ['x'] }];
+        const edits = new Map([[customChoiceValue(0), { name: 'constructor', commands: ['x'] }]]);
+        assert.deepEqual(customNamesInUse(odd, edits).sort(), ['__proto__', 'constructor']);
+    });
+});
+
+describe('editing custom entries — what is saved and reported', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'], note: 'keep me' };
+    const preset = [{ name: 'web', mode: 'run' }, seed, { name: 'api', mode: 'run' }];
+    const selection = ['web', customChoiceValue(1), 'api'];
+    const edits = new Map([[customChoiceValue(1), { name: 'seed', commands: ['npm ci', 'npm run seed'] }]]);
+
+    test('an edited entry keeps its place and its unknown keys', () => {
+        assert.deepEqual(applyAnswersToPreset(selection, {}, preset, [], edits), [
+            { name: 'web', mode: 'run' },
+            { name: 'seed', mode: 'terminal', commands: ['npm ci', 'npm run seed'], note: 'keep me' },
+            { name: 'api', mode: 'run' },
+        ]);
+    });
+
+    test('an edit of an entry that was unchecked is not resurrected', () => {
+        assert.deepEqual(applyAnswersToPreset(['web', 'api'], {}, preset, [], edits).map((e) => e.name), ['web', 'api']);
+    });
+
+    test('an edit never applies to a run configuration of the same name', () => {
+        const clash = new Map([['web', { name: 'www', commands: ['x'] }]]);
+        assert.deepEqual(applyAnswersToPreset(selection, {}, preset, [], clash), preset);
+    });
+
+    test('diffPreset reports a rename and a command change, not a removal plus an addition', () => {
+        const after = applyAnswersToPreset(selection, {}, preset, [], edits);
+        assert.deepEqual(diffPreset(preset, after, edits), {
+            added: [],
+            removed: [],
+            changed: ['seed db: renamed to seed', 'seed: npm i && npm run seed → npm ci && npm run seed'],
+            unchanged: false,
+        });
+    });
+
+    test('diffPreset sees reordered commands, even when the joined line would read the same', () => {
+        const before = [{ name: 's', mode: 'terminal', commands: ['a', 'b'] }];
+        const reordered = [{ name: 's', mode: 'terminal', commands: ['b', 'a'] }];
+        const merged = [{ name: 's', mode: 'terminal', commands: ['a && b'] }];
+
+        assert.deepEqual(diffPreset(before, reordered).changed, ['s: a && b → b && a']);
+        assert.equal(diffPreset(before, merged).unchanged, false);
+    });
+
+    test('an edit that ends where it started is no change at all', () => {
+        const same = new Map([[customChoiceValue(1), { name: 'seed db', commands: ['npm i', 'npm run seed'] }]]);
+        const after = applyAnswersToPreset(selection, {}, preset, [], same);
+        assert.equal(diffPreset(preset, after, same).unchanged, true);
+    });
+
+    test('an entry edited and then deleted is reported under its old name', () => {
+        const after = applyAnswersToPreset(['web', 'api'], {}, preset, [], edits);
+        assert.deepEqual(diffPreset(preset, after, edits).removed, ['seed db']);
+    });
+});
+
+describe('screenChoices — the list as the screen draws it', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
+    const configs = [{ name: 'web', description: 'npm' }, { name: 'api', description: '' }];
+    const { choices: base } = buildInitialSelection(configs, [{ name: 'web', mode: 'run' }, seed]);
+    const SEED = customChoiceValue(1);
+    const screen = (over = {}) => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [], ...over });
+
+    test('the IDE list, then the preset\'s custom entries; only those are editable', () => {
+        assert.deepEqual(screenChoices(base, screen()), [
+            { name: 'web  (npm)', value: 'web', checked: true, editable: false },
+            { name: 'api', value: 'api', checked: false, editable: false },
+            { name: '⌘ seed db — npm i && npm run seed', value: SEED, checked: true, editable: true },
+        ]);
+    });
+
+    test('checked comes from the screen, not from the preset', () => {
+        const items = screenChoices(base, screen({ checked: new Set(['api']) }));
+        assert.deepEqual(items.map((item) => item.checked), [false, true, false]);
+    });
+
+    test('an edited entry shows its new name and commands, under its old value', () => {
+        const edits = new Map([[SEED, { name: 'seed', commands: ['npm ci'] }]]);
+        assert.deepEqual(screenChoices(base, screen({ edits }))[2], {
+            name: '⌘ seed — npm ci', value: SEED, checked: true, editable: true,
+        });
+    });
+
+    test('entries added on this screen follow, editable, under values of their own', () => {
+        const added = [{ name: 'lint', mode: 'terminal', commands: ['npm run lint'] }];
+        const items = screenChoices(base, screen({ added, checked: new Set([newChoiceValue(0)]) }));
+        assert.deepEqual(items[3], { name: '⌘ lint — npm run lint', value: newChoiceValue(0), checked: true, editable: true });
+    });
+
+    test('a new entry\'s value is never a configuration\'s or a saved custom entry\'s', () => {
+        assert.notEqual(newChoiceValue(0), customChoiceValue(0));
+        assert.notEqual(newChoiceValue(0), '0');
+        assert.notEqual(newChoiceValue(0), newChoiceValue(1));
+    });
+});
+
+describe('splitSelection — what the list hands to the save', () => {
+    const added = [
+        { name: 'a', mode: 'terminal', commands: ['x'] },
+        { name: 'b', mode: 'terminal', commands: ['y'] },
+    ];
+    const item = (value, checked) => ({ value, name: value, checked, editable: false });
+
+    test('the checked values in list order, with the new entries taken out and handed back as entries', () => {
+        const items = [
+            item('web', true),
+            item('api', false),
+            item(customChoiceValue(0), true),
+            item(newChoiceValue(0), false),
+            item(newChoiceValue(1), true),
+        ];
+        assert.deepEqual(splitSelection(items, added), {
+            selection: ['web', customChoiceValue(0)],
+            added: [added[1]],
+        });
+    });
+
+    test('a new entry left unchecked is not saved', () => {
+        assert.deepEqual(splitSelection([item(newChoiceValue(0), false), item(newChoiceValue(1), true)], added).added, [added[1]]);
+    });
+
+    test('the selection never asks a mode question about a new entry', () => {
+        const { selection } = splitSelection([item(newChoiceValue(0), true), item('web', true)], added);
+        assert.deepEqual(pendingModeQuestions(selection, []), ['web']);
+    });
+});
+
+describe('the list\'s screen state — pure transitions', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'], note: 'keep me' };
+    const other = { name: 'other', mode: 'terminal', commands: ['x'] };
+    const preset = [{ name: 'web', mode: 'run' }, seed, other];
+    const SEED = customChoiceValue(1);
+    const fresh = () => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [] });
+
+    test('newChoiceIndex reads back newChoiceValue, and is -1 for anything else', () => {
+        assert.equal(newChoiceIndex(newChoiceValue(0)), 0);
+        assert.equal(newChoiceIndex(newChoiceValue(12)), 12);
+        assert.equal(newChoiceIndex(SEED), -1);
+        assert.equal(newChoiceIndex('web'), -1);
+    });
+
+    test('addCustomEntry appends the entry checked and names its list value; the old screen is untouched', () => {
+        const screen = fresh();
+        const entry = { name: 'lint', mode: 'terminal', commands: ['npm run lint'] };
+        const { screen: next, value } = addCustomEntry(screen, entry);
+
+        assert.equal(value, newChoiceValue(0));
+        assert.deepEqual(next.added, [entry]);
+        assert.ok(next.checked.has(value));
+        assert.deepEqual(screen.added, []);
+        assert.ok(!screen.checked.has(value));
+    });
+
+    test('customDraft of a saved entry: its commands, and the names it may keep', () => {
+        assert.deepEqual(customDraft(preset, fresh(), SEED), {
+            draft: { name: 'seed db', commands: ['npm i', 'npm run seed'] },
+            keep: ['seed db', 'seed db'],
+        });
+    });
+
+    test('customDraft of an edited saved entry starts from the edit, and may still go back to its old name', () => {
+        const screen = { ...fresh(), edits: new Map([[SEED, { name: 'seed', commands: ['npm ci'] }]]) };
+        assert.deepEqual(customDraft(preset, screen, SEED), {
+            draft: { name: 'seed', commands: ['npm ci'] },
+            keep: ['seed db', 'seed'],
+        });
+    });
+
+    test('customDraft of an entry added on this screen', () => {
+        const { screen } = addCustomEntry(fresh(), { name: 'lint', mode: 'terminal', commands: ['a'] });
+        assert.deepEqual(customDraft(preset, screen, newChoiceValue(0)), {
+            draft: { name: 'lint', commands: ['a'] },
+            keep: ['lint'],
+        });
+    });
+
+    test('applyEntryEdit records a saved entry\'s edit under its list value, which a rename leaves alone', () => {
+        const next = applyEntryEdit(preset, fresh(), SEED, { name: 'seed', commands: ['npm ci'] });
+        assert.deepEqual([...next.edits], [[SEED, { name: 'seed', commands: ['npm ci'] }]]);
+    });
+
+    test('applyEntryEdit replaces an added entry in place, keeping what the edit does not cover', () => {
+        const { screen } = addCustomEntry(fresh(), { name: 'lint', mode: 'terminal', commands: ['a'] });
+        const next = applyEntryEdit(preset, screen, newChoiceValue(0), { name: 'lint:fix', commands: ['b'] });
+        assert.deepEqual(next.added, [{ name: 'lint:fix', mode: 'terminal', commands: ['b'] }]);
+        assert.deepEqual(screen.added[0].name, 'lint');
+    });
+
+    test('applyEntryEdit checks an unchecked entry again when the edit changed it, and only then', () => {
+        const unchecked = { ...fresh(), checked: new Set(['web']) };
+        assert.ok(applyEntryEdit(preset, unchecked, SEED, { name: 'seed', commands: ['npm i', 'npm run seed'] }).checked.has(SEED));
+        assert.ok(applyEntryEdit(preset, unchecked, SEED, { name: 'seed db', commands: ['npm ci'] }).checked.has(SEED));
+        assert.ok(!applyEntryEdit(preset, unchecked, SEED, { name: 'seed db', commands: ['npm i', 'npm run seed'] }).checked.has(SEED));
+    });
+
+    test('applyEntryEdit with null deletes by unchecking: the row stays, so space undoes it', () => {
+        const next = applyEntryEdit(preset, fresh(), SEED, null);
+        const items = screenChoices(buildInitialSelection([{ name: 'web' }], preset).choices, next);
+
+        assert.deepEqual(items.find((item) => item.value === SEED)?.checked, false);
+        assert.deepEqual(splitSelection(items, next.added).selection, ['web']);
+    });
+
+    test('takenNames for a new entry: every saved custom name, every name given on this screen', () => {
+        let screen = applyEntryEdit(preset, fresh(), SEED, { name: 'seed', commands: ['x'] });
+        ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
+        assert.deepEqual(takenNames(preset, screen).sort(), ['lint', 'other', 'seed', 'seed db']);
+    });
+
+    test('takenNames leaves out the entry asked about, saved or new', () => {
+        let screen = fresh();
+        ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
+        assert.deepEqual(takenNames(preset, screen, SEED).sort(), ['lint', 'other']);
+        assert.deepEqual(takenNames(preset, screen, newChoiceValue(0)).sort(), ['other', 'seed db']);
+    });
+
+    test('a deleted entry, saved or new, keeps its name: its row is still there to check again', () => {
+        let screen = fresh();
+        ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
+        screen = applyEntryEdit(preset, screen, newChoiceValue(0), null);
+        screen = applyEntryEdit(preset, screen, SEED, null);
+        assert.deepEqual(takenNames(preset, screen).sort(), ['lint', 'other', 'seed db']);
+    });
+});
+
+describe('two custom entries of one name (a hand-edited file the store accepts)', () => {
+    const preset = [
+        { name: 'x', mode: 'terminal', commands: ['echo first'] },
+        { name: 'x', mode: 'terminal', commands: ['echo second'] },
+    ];
+    const base = () => buildInitialSelection([], preset).choices;
+    const open = () => ({ checked: new Set(base().map((c) => c.value)), edits: new Map(), added: [] });
+    /** @param {object} screen */
+    const save = (screen) => {
+        const { selection } = splitSelection(screenChoices(base(), screen), []);
+        return applyAnswersToPreset(selection, {}, preset, [], screen.edits);
+    };
+
+    test('each is a row of its own', () => {
+        assert.equal(new Set(base().map((c) => c.value)).size, 2);
+    });
+
+    test('e on the second opens the second, and the edit changes the second only', () => {
+        const [, second] = base();
+        assert.deepEqual(customDraft(preset, open(), second.value).draft.commands, ['echo second']);
+
+        const next = applyEntryEdit(preset, open(), second.value, { name: 'x', commands: ['echo edited'] });
+        assert.deepEqual(save(next).map((entry) => entry.commands), [['echo first'], ['echo edited']]);
+    });
+
+    test('unchecking or deleting one keeps the other', () => {
+        const [first, second] = base();
+        const unchecked = { ...open(), checked: new Set([second.value]) };
+        assert.deepEqual(save(unchecked).map((entry) => entry.commands), [['echo second']]);
+
+        const deleted = applyEntryEdit(preset, open(), first.value, null);
+        assert.deepEqual(save(deleted).map((entry) => entry.commands), [['echo second']]);
+    });
+});
+
+describe('pageSizeFor — a list that fits the terminal, so it can be erased in place', () => {
+    test('twenty rows when the terminal has room, or when its height is unknown', () => {
+        assert.equal(pageSizeFor(40), 20);
+        assert.equal(pageSizeFor(undefined), 20);
+    });
+
+    test('a short terminal gets its height minus the question, the blank and the key lines', () => {
+        assert.equal(pageSizeFor(14), 10);
+    });
+
+    test('never less than one row', () => {
+        assert.equal(pageSizeFor(3), 1);
+        assert.equal(pageSizeFor(0), 1);
+    });
+});
+
+describe('focusAfter — where the entry menu\'s cursor goes after a change to the commands', () => {
+    const after = (commands, edit) => focusAfter(edit, commands);
+
+    test('on the line that moved, at its new place', () => {
+        assert.equal(after(['b', 'a', 'c'], { type: 'up', index: 1 }), 0);
+        assert.equal(after(['a', 'c', 'b'], { type: 'down', index: 1 }), 2);
+    });
+
+    test('a move past either end stays where it was', () => {
+        assert.equal(after(['a', 'b'], { type: 'up', index: 0 }), 0);
+        assert.equal(after(['a', 'b'], { type: 'down', index: 1 }), 1);
+    });
+
+    test('on the changed line, the new last line, or the line that took a removed one\'s place', () => {
+        assert.equal(after(['a', 'x'], { type: 'replace', index: 1, line: 'x' }), 1);
+        assert.equal(after(['a', 'b', 'c'], { type: 'append', line: 'c' }), 2);
+        assert.equal(after(['a', 'c'], { type: 'remove', index: 1 }), 1);
+        assert.equal(after(['a'], { type: 'remove', index: 1 }), 0);
+    });
+});
+
+describe('fitLine — a question that cannot wrap', () => {
+    test('left alone when it fits, or when the width is unknown', () => {
+        assert.equal(fitLine('Command 1: npm i', 80), 'Command 1: npm i');
+        assert.equal(fitLine('x'.repeat(300), undefined), 'x'.repeat(300));
+    });
+
+    test('cut with an ellipsis to leave room for the "? " in front and the cursor after', () => {
+        const line = fitLine(`Command 1: ${'x'.repeat(100)}`, 40);
+        assert.equal(line.length, 37);
+        assert.ok(line.endsWith('…'));
+        assert.ok(line.startsWith('Command 1: xxx'));
     });
 });

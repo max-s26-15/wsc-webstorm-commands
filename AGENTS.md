@@ -21,6 +21,8 @@ configuration behind it, launched as a named Terminal tab.
 Since then: Tab completion for zsh and bash (`wsc --completion <shell>`, `src/completion/`).
 Since then: `wsc --delete-preset <name>` — a fifth intent that edits `.idea/webstorm-commands.json`
 and never contacts the IDE.
+Since then: custom commands are added (`n`) and edited (`e`) from the `wsc -c` list itself, which is
+now wsc's own prompt (`src/ui/editableCheckbox.js` on `@inquirer/core`).
 Since then: public-release preparation — npm package `webstorm-commands` (MIT, `engines.node >=22`,
 `files` allow-list, a second bin `wsc-mcp-probe`), the plugin renamed **wsc Companion** (`dev.wsc.ide`,
 0.5.1, `untilBuild 262.*`, built against a downloaded WebStorm), CI on Linux/macOS/Windows × Node
@@ -263,10 +265,61 @@ exercises it.
   could clear the announcement off the screen. The no-IDE path needs no catalogue for a preset made only of custom entries (the "WebStorm has
   saved no run configurations" error is raised only when a positional or a non-custom preset entry needs a catalogue),
   and `buildTabs()` never reads `entry.config` for them. In `--configure` the checkbox value of a custom
-  entry is `customChoiceValue(name)`, distinct from a configuration name, because a hand-edited file can
-  hold both under one name; an IDE that reports no configurations is no longer an error by itself (only the
-  add-a-command loop is offered), but with *stale* preset entries it still is (exit 1) — rewriting the
+  entry is `customChoiceValue(index)`, distinct from a configuration name, because a hand-edited file can
+  hold both under one name (and a position, not a name — see below); an IDE that reports no configurations is no longer an error by itself (the
+  list is shown empty, and `n` still adds), but with *stale* preset entries it still is (exit 1) — rewriting the
   preset from an empty list would delete entries the IDE merely failed to show.
+- **Custom entries are added (`n`) and edited (`e`) from the `--configure` list itself.** The stock
+  `@inquirer/prompts` checkbox takes no key of ours, so the list is `src/ui/editableCheckbox.js`, drawn on
+  `@inquirer/core` (a direct dependency now, with `@inquirer/figures`, both the versions `@inquirer/prompts`
+  already pulled in) to look like the stock one; every key's decision is the pure `pressKey()` in
+  `src/ui/checkboxKeys.js` — navigation through `@inquirer/core`'s `isUpKey`/`isDownKey` with the theme's
+  `keybindings`, checked *before* the letters, so `INQUIRER_KEYBINDINGS=emacs` Ctrl-N is "down" and not
+  `n`. `e`/`n` *settle* the prompt with `{action, value, checked, active}`, and
+  `runConfigure()` runs the menu and draws the list again from that state — one list, not a nested prompt.
+  For that to look like one list changing in place, leaving erases it: `@inquirer/core` reads
+  `context.clearPromptOnDone` only once the prompt has settled, so `editableCheckbox()` owns the context
+  and the view flips it on `e`/`n`, never on Enter (which leaves the usual `✔` line); every menu and input
+  opened from the list is passed `IN_PLACE` for the same reason. **Every one of those prompts takes an
+  empty answer as "back, nothing changed"** (an empty name or first command adds nothing; an empty rename
+  or change keeps the old value): otherwise the only way out of a mis-picked menu item is Ctrl-C, which
+  discards the whole screen. The list's state is `Screen` (`checked`, `edits`, `added`); it is
+  never mutated, and every transition beyond taking `checked` from what the list returned is a pure
+  function in `configureLogic.js` returning a new one — `addCustomEntry()`, `customDraft()`,
+  `applyEntryEdit()`, `takenNames()` — so `configure.js` only threads it through the prompts. Rows come from `screenChoices()`, the saved selection from `splitSelection()`;
+  no row ever leaves the list.
+  `customDraft()` also returns `keep`, the entry's own names, which `validateCustomName()` accepts even
+  when a run configuration has them — a hand-edited file can hold a custom entry called `web`. **No row is keyed by a name.** A saved custom entry is
+  `customChoiceValue(index)`, its position in the preset as read — the store accepts two custom entries of
+  one name, and keyed by name they were one row, so `e` on the second opened the first and the save
+  wrote the edit into both. An entry added on this screen is `newChoiceValue(index)` (read back with
+  `newChoiceIndex()`), and is taken out of the selection before anything reads it as a configuration
+  name (it would otherwise be asked a mode question). Neither changes when `e` renames the entry. Edits
+  of a saved entry are a `CustomEdits` `Map` keyed by that list value; `applyAnswersToPreset()` applies
+  them in place (position and unknown keys kept) and
+  `diffPreset(before, after, edits)` uses the same map to report a rename as `~ old: renamed to new`
+  instead of `-`/`+`, and compares `commands` as lists (`['a','b']` and `['a && b']` print alike).
+  "Delete" in the entry's menu *unchecks* the row and leaves it in the list (the label says so): the
+  save drops it like any unchecked row, and a Delete picked by mistake — it sits just above "Done", with
+  no confirmation — is undone with space instead of Ctrl-C, which loses the whole screen. An edit that changed
+  something checks the row again (`applyEntryEdit()`): an unchecked row is dropped on save, and nobody
+  edits an entry to have it dropped; opening the menu and leaving it untouched changes nothing. Every
+  list and menu gets `pageSizeFor(stdout.rows)` rows — `@inquirer/core` does not clamp `pageSize`, and
+  erasing cannot reach lines that scrolled off the top — and every question above one goes through
+  `fitLine(text, stdout.columns)`, since a long command in `Command 3: …` would wrap past that budget.
+  After a change the entry menu opens on the line that changed, at its new place (`focusAfter()`), and the
+  line menu on the last action while it is still offered, so moving a line three steps is Enter, Enter
+  three times. Every name stays taken while its row is in the list — saved or added, unchecked or
+  deleted (`takenNames()`), since a deleted row can be checked again. Every command line typed on the screen goes through
+  `validateCustomCommand()`, the store's own rule — before it, adding let a control character through and
+  wrote a file the next read refused. The last command of an entry cannot be deleted (an empty `commands`
+  does not load); the menu says to delete the entry instead. The fake `select`/`input` in
+  `test/configure.test.js` fail any prompt opened from the list without `IN_PLACE`, which nothing else
+  would notice. `test/editableCheckbox.test.js` drives the
+  real prompt through fake `input`/`output` streams (`createPrompt` takes both in its context) and pins
+  the `@inquirer/core` behaviour it depends on: the result shape, the keybindings reaching `pressKey()`,
+  and the erase on `e`/`n` read off the tail `ScreenManager.done()` writes (`eraseLines` vs `\n`). How
+  the screen *looks* was checked through a pty with a terminal emulator (`pyte`) snapshotting it.
 - **A Terminal tab is titled after the MCP *client* that opened it — so each one gets its own session.**
   `execute_terminal_command` has no tab-name parameter (schema read from the live IDE). Measured on
   WebStorm 2026.2.1: three calls from a client called `wsc` gave three tabs titled `wsc`; sessions called
@@ -665,7 +718,10 @@ exercises it.
 
 ## Notes for future phases
 
-- Both runtime dependencies are installed: `@modelcontextprotocol/sdk` and `@inquirer/prompts` (`^8`).
+- Runtime dependencies: `@modelcontextprotocol/sdk`, `@inquirer/prompts` (`^8`), and `@inquirer/core` +
+  `@inquirer/figures` for the `--configure` list (`src/ui/editableCheckbox.js`) — keep `@inquirer/core` on the
+  major `@inquirer/prompts` uses, so npm installs one copy. A stale `node_modules` once still held prompts 7.x
+  under a `^8` range (`npm ls` says `invalid`); run `npm ci` before checking a prompt by hand.
   `engines.node` is `>=22` — Node 18 and 20 were end-of-life before the first public release.
 - Beware `@` inside a JSDoc `@param` description: `defaults to @inquirer/prompts` is parsed as a new JSDoc
   tag and silently truncates the list of nested `opts.*` params (it cost a round of confusing TS8032 errors
