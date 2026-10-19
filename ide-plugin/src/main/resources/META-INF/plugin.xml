@@ -25,5 +25,6 @@
     <extensions defaultExtensionNs="com.intellij">
         <mcpServer.mcpToolset implementation="dev.wsc.ide.WscDebugToolset"/>
         <mcpServer.mcpToolset implementation="dev.wsc.ide.WscTerminalToolset"/>
+        <mcpServer.mcpToolset implementation="dev.wsc.ide.WscControlToolset"/>
     </extensions>
 </idea-plugin>

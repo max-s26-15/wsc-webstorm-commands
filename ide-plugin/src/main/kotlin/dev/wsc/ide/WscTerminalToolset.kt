@@ -27,15 +27,26 @@ class WscTerminalToolset : McpToolset {
         |Open a new tab in the IDE's Terminal tool window, running the user's shell on a real terminal
         |in the project root, title it `tabName`, and execute `command` in it.
         |Returns as soon as the command has been sent; it does not wait for the command to finish.
+        |With `kind`, the tab is marked as `wsc`'s for `list_running`, `stop_terminal_tab` and `restart_terminal_tab`.
         """,
     )
     suspend fun open_terminal_tab(
         @McpDescription("Title of the new Terminal tab") tabName: String,
         @McpDescription("Shell command line to execute in the tab") command: String,
+        @McpDescription("Kind of preset entry the tab runs: config (a run configuration) or custom (the user's own commands)")
+        kind: String? = null,
+        @McpDescription("Mode the entry was launched in: run, debug or terminal (default: terminal)")
+        mode: String? = null,
+        @McpDescription("Inspector port, when the entry is debugged through the terminal")
+        debugPort: Int? = null,
     ): String {
         val project = currentCoroutineContext().project
         val workingDirectory = project.basePath
             ?: throw fail("${project.name} has no base directory to open a terminal in")
+        val mark = kind?.let { TabMark(tabName, it, mode ?: "terminal", debugPort) }
+        if (mark != null && (mark.kind !in TabMarks.KINDS || mark.mode !in TabMarks.MODES)) {
+            throw fail("kind must be one of ${TabMarks.KINDS} and mode one of ${TabMarks.MODES}, got $kind/$mode")
+        }
 
         // Creating a tab touches the tool window's UI state, which the IDE does on the EDT.
         withContext(Dispatchers.EDT) {
@@ -50,6 +61,7 @@ class WscTerminalToolset : McpToolset {
             @Suppress("DEPRECATION")
             val widget = TerminalToolWindowManager.getInstance(project)
                 .createShellWidget(workingDirectory, tabName, true, false)
+            if (mark != null) TabMarks.put(widget, mark)
             // Queued until the shell is ready, then typed in and executed, as if by the user.
             widget.sendCommandToExecute(command)
         }
