@@ -40,6 +40,8 @@
     "mcp:probe": "node scripts/mcp-probe.js"
   },
   "dependencies": {
+    "@inquirer/core": "^12.0.4",
+    "@inquirer/figures": "^2.0.9",
     "@inquirer/prompts": "^8.7.2",
     "@modelcontextprotocol/sdk": "^1.30.0"
   },

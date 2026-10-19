@@ -32,18 +32,50 @@ export function customChoiceValue(name) {
 /** @param {string} value */
 const isCustomChoiceValue = (value) => value.startsWith(CUSTOM_PREFIX);
 
+const NEW_PREFIX = '\u0000new\u0000';
+
+/**
+ * The list value of a custom entry added on this screen, by its place among the added ones.
+ *
+ * Not its name, which an edit can change while the entry stays the same row. Distinct from a
+ * configuration name and from customChoiceValue() alike, so the save can take these out of
+ * the selection before anything reads it as names.
+ *
+ * @param {number} index
+ * @returns {string}
+ */
+export function newChoiceValue(index) {
+    return `${NEW_PREFIX}${index}`;
+}
+
+/** @param {string} value */
+export const isNewChoiceValue = (value) => value.startsWith(NEW_PREFIX);
+
 /**
  * Identity of an entry across two versions of a preset. Kind first, so a custom entry and a
  * configuration of one name are not the same entry.
  *
  * @param {PresetEntry} entry
+ * @param {string} [name] - the name to file it under, when it was renamed since
  */
-const entryKey = (entry) => JSON.stringify([isCustomEntry(entry) ? 'custom' : 'config', entry.name]);
+const entryKey = (entry, name = entry.name) => JSON.stringify([isCustomEntry(entry) ? 'custom' : 'config', name]);
+
+/**
+ * How a custom entry is shown in a list: its name and the one line it runs.
+ *
+ * @param {{ name: string, commands: string[] }} entry
+ */
+const customLabel = (entry) => `⌘ ${entry.name} — ${customCommandLine(entry.commands)}`;
 
 /**
  * @typedef {import('../resolve.js').RunConfigInfo} RunConfigInfo
  * @typedef {import('../presets/store.js').PresetEntry} PresetEntry
  * @typedef {{ name: string, value: string, checked: boolean, mode: import('../modes.js').LaunchMode | null }} Choice
+ *
+ * What the edit screen did to one custom entry, keyed elsewhere by the name the entry had
+ * when the screen opened — a rename changes its name, not which entry it is.
+ * @typedef {{ name: string, commands: string[] }} CustomEdit
+ * @typedef {Map<string, CustomEdit>} CustomEdits
  */
 
 /**
@@ -77,7 +109,7 @@ export function buildInitialSelection(runConfigs, preset = []) {
     // After the IDE's list, in the order the preset has them; always checked, because
     // unchecking is how one is deleted.
     const customChoices = preset.filter(isCustomEntry).map((entry) => ({
-        name: `⌘ ${entry.name} — ${customCommandLine(entry.commands)}`,
+        name: customLabel(entry),
         value: customChoiceValue(entry.name),
         checked: true,
         mode: entry.mode,
@@ -113,17 +145,21 @@ export function pendingModeQuestions(selection, preset = []) {
  * @param {Record<string, import('../modes.js').LaunchMode>} [modes] - answers, plus any carried-over modes
  * @param {PresetEntry[]} [preset] - the preset before editing
  * @param {PresetEntry[]} [added] - custom entries created on this screen
+ * @param {CustomEdits} [edits] - custom entries changed on this screen; each keeps its place
  * @returns {PresetEntry[]}
  */
-export function applyAnswersToPreset(selection, modes = {}, preset = [], added = []) {
+export function applyAnswersToPreset(selection, modes = {}, preset = [], added = [], edits = new Map()) {
     const selectedNames = new Set(selection.filter((value) => !isCustomChoiceValue(value)));
     const keptCustom = new Set(selection.filter(isCustomChoiceValue));
 
     const kept = preset
         .filter((entry) =>
             isCustomEntry(entry) ? keptCustom.has(customChoiceValue(entry.name)) : selectedNames.has(entry.name))
-        .map((entry) =>
-            isCustomEntry(entry) ? entry : { ...entry, mode: answered(modes, entry.name) ?? entry.mode });
+        .map((entry) => {
+            if (!isCustomEntry(entry)) return { ...entry, mode: answered(modes, entry.name) ?? entry.mode };
+            const edit = edits.get(entry.name);
+            return edit ? { ...entry, name: edit.name, commands: edit.commands } : entry;
+        });
 
     const keptNames = new Set(kept.filter((entry) => !isCustomEntry(entry)).map((entry) => entry.name));
     const appended = selection
@@ -152,20 +188,33 @@ function answered(modes, name) {
  *
  * @param {PresetEntry[]} before
  * @param {PresetEntry[]} after
+ * @param {CustomEdits} [edits] - so a renamed custom entry is matched with what it was
  * @returns {{ added: string[], removed: string[], changed: string[], unchanged: boolean }}
  */
-export function diffPreset(before, after) {
-    // Compares kind, name and mode only, never `commands`: no path through `--configure` can
-    // change the commands of an existing custom entry (editing is out of scope, and re-adding
-    // a name is refused). If entry editing is ever added, this has to learn to compare them.
-    const beforeModes = new Map(before.map((entry) => [entryKey(entry), entry.mode]));
-    const afterModes = new Map(after.map((entry) => [entryKey(entry), entry.mode]));
+export function diffPreset(before, after, edits = new Map()) {
+    /** @param {PresetEntry} entry - from `before`; the key it is found under in `after` */
+    const keyAfter = (entry) => entryKey(entry, (isCustomEntry(entry) && edits.get(entry.name)?.name) || entry.name);
 
-    const added = after.filter((entry) => !beforeModes.has(entryKey(entry))).map((entry) => entry.name);
-    const removed = before.filter((entry) => !afterModes.has(entryKey(entry))).map((entry) => entry.name);
-    const changed = after
-        .filter((entry) => beforeModes.has(entryKey(entry)) && beforeModes.get(entryKey(entry)) !== entry.mode)
-        .map((entry) => `${entry.name} → ${entry.mode}`);
+    const previous = new Map(before.map((entry) => [keyAfter(entry), entry]));
+    const afterKeys = new Set(after.map((entry) => entryKey(entry)));
+
+    const added = after.filter((entry) => !previous.has(entryKey(entry))).map((entry) => entry.name);
+    const removed = before.filter((entry) => !afterKeys.has(keyAfter(entry))).map((entry) => entry.name);
+
+    /** @type {string[]} */
+    const changed = [];
+    for (const entry of after) {
+        const old = previous.get(entryKey(entry));
+        if (!old) continue;
+        if (old.name !== entry.name) changed.push(`${old.name}: renamed to ${entry.name}`);
+        if (old.mode !== entry.mode) changed.push(`${entry.name} → ${entry.mode}`);
+        // Compared as lists, not as joined lines: ['a', 'b'] and ['a && b'] print alike but
+        // are not the same entry on disk.
+        if (isCustomEntry(old) && isCustomEntry(entry)
+            && JSON.stringify(old.commands) !== JSON.stringify(entry.commands)) {
+            changed.push(`${entry.name}: ${customCommandLine(old.commands)} → ${customCommandLine(entry.commands)}`);
+        }
+    }
 
     return {
         added,
@@ -179,8 +228,8 @@ export function diffPreset(before, after) {
  * Why a name cannot be used for a new custom command, or `null` when it can.
  *
  * `taken` is every custom name the preset had when the screen opened, plus what was added
- * since — including one just unchecked: re-adding it in the same run would look, to the
- * diff, like nothing changed and the new commands would never be saved.
+ * or renamed since (customNamesInUse()) — including one just unchecked: re-adding it in the
+ * same run would be an edit in disguise, which the edit step does in place instead.
  *
  * @param {string} rawName - trimmed here; the caller may pass the line as typed
  * @param {{ taken?: string[], ideNames?: string[] }} [opts]
@@ -193,4 +242,167 @@ export function validateCustomName(rawName, { taken = [], ideNames = [] } = {}) 
     if (taken.includes(name)) return `"${name}" is already a custom command in this preset`;
     if (ideNames.includes(name)) return `"${name}" is the name of a run configuration; pick a different name`;
     return null;
+}
+
+/**
+ * Why a line cannot be one of a custom entry's commands, or `null` when it can.
+ *
+ * The same rule the store applies on read: a line it would refuse must not be written in the
+ * first place, or the next `wsc` stops on a file this screen produced.
+ *
+ * @param {string} rawLine - trimmed here, like the line saved
+ * @returns {string | null}
+ */
+export function validateCustomCommand(rawLine) {
+    const line = rawLine.trim();
+    if (line === '') return 'a command is required';
+    if (CONTROL_CHARACTERS.test(line)) return 'a command cannot contain control characters';
+    return null;
+}
+
+/**
+ * @typedef {{ type: 'replace', index: number, line: string }
+ *   | { type: 'up' | 'down' | 'remove', index: number }
+ *   | { type: 'append', line: string }} CommandEdit
+ */
+
+/**
+ * One change to a custom entry's command list, as a new list.
+ *
+ * A move past either end, or removing the only line, leaves the list as it was: the menu
+ * does not offer them, and an entry with no commands is one the store refuses to read.
+ *
+ * @param {string[]} commands
+ * @param {CommandEdit} edit
+ * @returns {string[]}
+ */
+export function editCommands(commands, edit) {
+    const next = [...commands];
+    switch (edit.type) {
+        case 'replace':
+            next[edit.index] = edit.line;
+            break;
+        case 'up':
+        case 'down': {
+            const other = edit.type === 'up' ? edit.index - 1 : edit.index + 1;
+            if (other < 0 || other >= next.length) break;
+            [next[edit.index], next[other]] = [next[other], next[edit.index]];
+            break;
+        }
+        case 'remove':
+            if (next.length > 1) next.splice(edit.index, 1);
+            break;
+        case 'append':
+            next.push(edit.line);
+            break;
+    }
+    return next;
+}
+
+/**
+ * Every custom name already spoken for, for the rename and add questions.
+ *
+ * The preset's own names count even when unchecked (see validateCustomName()), and an entry
+ * renamed on this screen holds both its old and its new name. `except` is the entry being
+ * renamed, which may keep its own name or take back the one it started with.
+ *
+ * @param {PresetEntry[]} preset - as it was when the screen opened
+ * @param {CustomEdits} [edits]
+ * @param {string} [except] - the original name of the entry being renamed
+ * @returns {string[]}
+ */
+export function customNamesInUse(preset, edits = new Map(), except) {
+    const names = new Set();
+    for (const entry of preset.filter(isCustomEntry)) {
+        if (entry.name === except) continue;
+        names.add(entry.name);
+        const edit = edits.get(entry.name);
+        if (edit) names.add(edit.name);
+    }
+    return [...names];
+}
+
+/**
+ * The menu for one custom entry. "Done" is last, so the way out is always in the same place.
+ *
+ * @param {CustomEdit} draft
+ * @returns {Array<{ name: string, value: 'name' | 'append' | 'delete' | 'done' | number }>}
+ */
+export function entryEditChoices(draft) {
+    return [
+        { name: `Name: ${draft.name}`, value: 'name' },
+        ...draft.commands.map((command, index) => ({ name: `${index + 1}. ${command}`, value: index })),
+        { name: '+ Add a command', value: 'append' },
+        { name: `Delete "${draft.name}" from the preset`, value: 'delete' },
+        { name: 'Done', value: 'done' },
+    ];
+}
+
+/**
+ * The menu for one command line. What cannot be done to it is shown disabled, with the
+ * reason, rather than left out: the list keeps its shape from one line to the next.
+ *
+ * @param {string[]} commands
+ * @param {number} index
+ * @returns {Array<{ name: string, value: 'replace' | 'up' | 'down' | 'remove' | 'back', disabled?: string | false }>}
+ */
+export function commandEditChoices(commands, index) {
+    return [
+        { name: 'Change', value: 'replace' },
+        { name: 'Move up', value: 'up', disabled: index === 0 && '(already the first)' },
+        { name: 'Move down', value: 'down', disabled: index === commands.length - 1 && '(already the last)' },
+        { name: 'Delete', value: 'remove', disabled: commands.length === 1 && '(the only command — delete the whole entry instead)' },
+        { name: 'Back', value: 'back' },
+    ];
+}
+
+/**
+ * The `--configure` list as it stands: the IDE's configurations and the preset's custom
+ * entries (buildInitialSelection()'s choices), with this screen's edits, additions and
+ * deletions applied. Only custom entries, saved or new, are editable.
+ *
+ * @param {Choice[]} base - from buildInitialSelection()
+ * @param {object} screen
+ * @param {Set<string>} screen.checked - values checked right now
+ * @param {CustomEdits} screen.edits - keyed by the name a saved entry had when the screen opened
+ * @param {PresetEntry[]} screen.added - new entries, in the order added; never spliced
+ * @param {Set<string>} screen.deleted - values removed with "Delete"
+ * @returns {import('./checkboxKeys.js').Item[]}
+ */
+export function screenChoices(base, { checked, edits, added, deleted }) {
+    const saved = base.map((choice) => {
+        if (!isCustomChoiceValue(choice.value)) {
+            return { name: choice.name, value: choice.value, checked: checked.has(choice.value), editable: false };
+        }
+        const edit = edits.get(choice.value.slice(CUSTOM_PREFIX.length));
+        return {
+            name: edit ? customLabel(edit) : choice.name,
+            value: choice.value,
+            checked: checked.has(choice.value),
+            editable: true,
+        };
+    });
+    const fresh = added.map((entry, index) => ({
+        name: customLabel(/** @type {CustomEdit} */ (entry)),
+        value: newChoiceValue(index),
+        checked: checked.has(newChoiceValue(index)),
+        editable: true,
+    }));
+    return [...saved, ...fresh].filter((item) => !deleted.has(item.value));
+}
+
+/**
+ * Split what the list submitted into the selection applyAnswersToPreset() reads and the new
+ * entries it appends. A new entry is saved only if it is still in the list and checked.
+ *
+ * @param {import('./checkboxKeys.js').Item[]} items - in list order
+ * @param {PresetEntry[]} added - indexed by newChoiceValue()
+ * @returns {{ selection: string[], added: PresetEntry[] }}
+ */
+export function splitSelection(items, added) {
+    const checked = items.filter((item) => item.checked).map((item) => item.value);
+    return {
+        selection: checked.filter((value) => !isNewChoiceValue(value)),
+        added: checked.filter(isNewChoiceValue).map((value) => added[Number(value.slice(NEW_PREFIX.length))]),
+    };
 }

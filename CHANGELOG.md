@@ -11,7 +11,7 @@ First public release.
 ### Added
 - Launch a set of WebStorm run configurations at once, each in its own Run/Debug or Terminal tab (`wsc a b:debug c:terminal`).
 - Presets in `.idea/webstorm-commands.json`, edited with `wsc -c`, several at once with `--preset a b`, deleted with `--delete-preset`.
-- Custom command entries in a preset (a named Terminal tab with no run configuration behind it).
+- Custom command entries in a preset (a named Terminal tab with no run configuration behind it), added (`n`), edited (`e`: rename; change, add, delete or reorder commands) and deleted from the `wsc -c` list.
 - `--list`, `--dry-run`, `--target=terminal`, `--debug-port`, `--fallback=retry|terminal` (OS terminal tabs without the IDE).
 - Tab completion for zsh and bash (`wsc --completion <shell>`).
 - `wsc-mcp-probe`, a diagnostic for the IDE's MCP Server.

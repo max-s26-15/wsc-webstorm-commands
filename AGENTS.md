@@ -264,9 +264,34 @@ exercises it.
   saved no run configurations" error is raised only when a positional or a non-custom preset entry needs a catalogue),
   and `buildTabs()` never reads `entry.config` for them. In `--configure` the checkbox value of a custom
   entry is `customChoiceValue(name)`, distinct from a configuration name, because a hand-edited file can
-  hold both under one name; an IDE that reports no configurations is no longer an error by itself (only the
-  add-a-command loop is offered), but with *stale* preset entries it still is (exit 1) — rewriting the
+  hold both under one name; an IDE that reports no configurations is no longer an error by itself (the
+  list is shown empty, and `n` still adds), but with *stale* preset entries it still is (exit 1) — rewriting the
   preset from an empty list would delete entries the IDE merely failed to show.
+- **Custom entries are added (`n`) and edited (`e`) from the `--configure` list itself.** The stock
+  `@inquirer/prompts` checkbox takes no key of ours, so the list is `src/ui/editableCheckbox.js`, drawn on
+  `@inquirer/core` (a direct dependency now, with `@inquirer/figures`, both the versions `@inquirer/prompts`
+  already pulled in) to look like the stock one; every key's decision is the pure `pressKey()` in
+  `src/ui/checkboxKeys.js`. `e`/`n` *settle* the prompt with `{action, value, checked, active}`, and
+  `runConfigure()` runs the menu and draws the list again from that state — one list, not a nested prompt.
+  For that to look like one list changing in place, leaving erases it: `@inquirer/core` reads
+  `context.clearPromptOnDone` only once the prompt has settled, so `editableCheckbox()` owns the context
+  and the view flips it on `e`/`n`, never on Enter (which leaves the usual `✔` line); every menu and input
+  opened from the list is passed `IN_PLACE` for the same reason. The list's state is `Screen` in
+  `configure.js` (`checked`, `edits`, `added`, `deleted`), turned into rows by `screenChoices()` and back
+  into a selection by `splitSelection()`. An entry added on this screen is keyed `newChoiceValue(index)` —
+  never its name, which `e` can change — and is taken out of the selection before anything reads it as a
+  configuration name (it would otherwise be asked a mode question). Edits of a *saved* entry are a
+  `CustomEdits` `Map` keyed by its name *as the screen opened*, because a rename changes the name and not
+  the entry; `applyAnswersToPreset()` applies them in place (position and unknown keys kept) and
+  `diffPreset(before, after, edits)` uses the same map to report a rename as `~ old: renamed to new`
+  instead of `-`/`+`, and compares `commands` as lists (`['a','b']` and `['a && b']` print alike).
+  "Delete" in the entry's menu takes it off the list and unchecks it. A saved entry's name stays taken
+  even once unchecked or deleted (`customNamesInUse()`); an entry added and deleted on the same screen was
+  never saved, so its name is free again. Every command line typed on the screen goes through
+  `validateCustomCommand()`, the store's own rule — before it, adding let a control character through and
+  wrote a file the next read refused. The last command of an entry cannot be deleted (an empty `commands`
+  does not load); the menu says to delete the entry instead. The real list was checked through a pty with
+  a terminal emulator (`pyte`) snapshotting the screen, since erasing is the part a byte log cannot show.
 - **A Terminal tab is titled after the MCP *client* that opened it — so each one gets its own session.**
   `execute_terminal_command` has no tab-name parameter (schema read from the live IDE). Measured on
   WebStorm 2026.2.1: three calls from a client called `wsc` gave three tabs titled `wsc`; sessions called
@@ -665,7 +690,10 @@ exercises it.
 
 ## Notes for future phases
 
-- Both runtime dependencies are installed: `@modelcontextprotocol/sdk` and `@inquirer/prompts` (`^8`).
+- Runtime dependencies: `@modelcontextprotocol/sdk`, `@inquirer/prompts` (`^8`), and `@inquirer/core` +
+  `@inquirer/figures` for the `--configure` list (`src/ui/editableCheckbox.js`) — keep `@inquirer/core` on the
+  major `@inquirer/prompts` uses, so npm installs one copy. A stale `node_modules` once still held prompts 7.x
+  under a `^8` range (`npm ls` says `invalid`); run `npm ci` before checking a prompt by hand.
   `engines.node` is `>=22` — Node 18 and 20 were end-of-life before the first public release.
 - Beware `@` inside a JSDoc `@param` description: `defaults to @inquirer/prompts` is parsed as a new JSDoc
   tag and silently truncates the list of nested `opts.*` params (it cost a round of confusing TS8032 errors
