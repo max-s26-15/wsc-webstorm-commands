@@ -4,6 +4,15 @@ Two things are released from this repository, each on its own version line: the 
 command line tool (npm package `webstorm-commands`, tags `v*`) and the wsc Companion IDE
 plugin (tags `plugin-v*`). Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [cli 0.2.0] - 2026-MM-DD
+
+### Added
+- `wsc --stop` and `wsc --restart`: stop or restart what runs from the presets — every preset, the ones named with `--preset`, or single entries by name (custom commands too). A restart stays in the same Run, Debug or Terminal tab; an entry whose preset now gives it another mode is stopped and launched anew. Nothing is recorded: the IDE is asked what runs, every time. Needs wsc Companion 0.6.0.
+- Tab completion offers the presets' entries after `--stop` / `--restart`.
+
+### Changed
+- Terminal tabs opened through wsc Companion carry a mark (the entry's kind, mode and inspector port), which is how `--stop` and `--restart` find them again.
+
 ## [plugin 0.6.0] - 2026-MM-DD
 
 ### Added
