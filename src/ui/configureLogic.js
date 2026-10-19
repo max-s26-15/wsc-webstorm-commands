@@ -103,7 +103,6 @@ const customLabel = (entry) => `⌘ ${entry.name} — ${customCommandLine(entry.
  *   checked: Set<string>,
  *   edits: CustomEdits,
  *   added: PresetEntry[],
- *   deleted: Set<string>,
  * }} Screen
  */
 
@@ -370,7 +369,7 @@ export function entryEditChoices(draft) {
         { name: `Name: ${draft.name}`, value: 'name' },
         ...draft.commands.map((command, index) => ({ name: `${index + 1}. ${command}`, value: index })),
         { name: '+ Add a command', value: 'append' },
-        { name: `Delete "${draft.name}" from the preset`, value: 'delete' },
+        { name: `Delete "${draft.name}" from the preset (unchecks it)`, value: 'delete' },
         { name: 'Done', value: 'done' },
     ];
 }
@@ -395,15 +394,16 @@ export function commandEditChoices(commands, index) {
 
 /**
  * The `--configure` list as it stands: the IDE's configurations and the preset's custom
- * entries (buildInitialSelection()'s choices), with this screen's edits, additions and
- * deletions applied. Only custom entries, saved or new, are editable.
+ * entries (buildInitialSelection()'s choices), with this screen's edits and additions
+ * applied. Only custom entries, saved or new, are editable. No row ever leaves the list:
+ * "Delete" unchecks, so it can be undone with space.
  *
  * @param {Choice[]} base - from buildInitialSelection()
  * @param {Screen} screen - `edits` keyed by a saved entry's list value (its position);
- *   `added` in the order added, never spliced; `deleted` the values removed with "Delete"
+ *   `added` in the order added, never spliced
  * @returns {import('./checkboxKeys.js').Item[]}
  */
-export function screenChoices(base, { checked, edits, added, deleted }) {
+export function screenChoices(base, { checked, edits, added }) {
     const saved = base.map((choice) => {
         if (!isCustomChoiceValue(choice.value)) {
             return { name: choice.name, value: choice.value, checked: checked.has(choice.value), editable: false };
@@ -422,7 +422,7 @@ export function screenChoices(base, { checked, edits, added, deleted }) {
         checked: checked.has(newChoiceValue(index)),
         editable: true,
     }));
-    return [...saved, ...fresh].filter((item) => !deleted.has(item.value));
+    return [...saved, ...fresh];
 }
 
 /**
@@ -493,9 +493,10 @@ export function customDraft(preset, screen, value) {
 /**
  * What the entry's menu ended with: an edit, or `null` for "Delete".
  *
- * Deleting takes the row off the list; `deleted` is the only record of it, since a row that
- * is not drawn cannot be submitted checked. An edit that changed something also checks the
- * row: an unchecked row is dropped on save, and nobody edits an entry to have it dropped.
+ * Deleting unchecks the row and leaves it in the list: the save drops it exactly as it drops
+ * any unchecked row, and a Delete picked by mistake (it sits just above "Done", with no
+ * confirmation) is undone with space instead of Ctrl-C, which would lose the whole screen.
+ * An edit that changed something checks the row: nobody edits an entry to have it dropped.
  * Opening the menu and leaving it untouched changes nothing, the check included.
  *
  * @param {PresetEntry[]} preset
@@ -505,7 +506,7 @@ export function customDraft(preset, screen, value) {
  * @returns {Screen}
  */
 export function applyEntryEdit(preset, screen, value, result) {
-    if (result === null) return { ...screen, deleted: new Set([...screen.deleted, value]) };
+    if (result === null) return { ...screen, checked: new Set([...screen.checked].filter((v) => v !== value)) };
 
     const { draft } = customDraft(preset, screen, value);
     const changed = draft.name !== result.name || JSON.stringify(draft.commands) !== JSON.stringify(result.commands);
@@ -523,8 +524,9 @@ export function applyEntryEdit(preset, screen, value, result) {
 /**
  * Custom names the entry with list value `except` cannot take, or a new entry if omitted.
  *
- * The preset's own names stay taken even once unchecked or deleted (see validateCustomName());
- * an entry added on this screen and deleted again was never saved, so its name is free.
+ * The preset's own names stay taken even once unchecked or deleted (see validateCustomName()),
+ * and so do those of entries added on this screen: a deleted row is still in the list, to be
+ * checked again.
  *
  * @param {PresetEntry[]} preset
  * @param {Screen} screen
@@ -533,7 +535,7 @@ export function applyEntryEdit(preset, screen, value, result) {
  */
 export function takenNames(preset, screen, except) {
     const fresh = screen.added
-        .filter((_, index) => newChoiceValue(index) !== except && !screen.deleted.has(newChoiceValue(index)))
+        .filter((_, index) => newChoiceValue(index) !== except)
         .map((entry) => entry.name);
     return [...customNamesInUse(preset, screen.edits, except), ...fresh];
 }
@@ -560,4 +562,44 @@ const PAGE_CHROME = 4;
 export function pageSizeFor(rows) {
     if (rows === undefined) return PAGE_SIZE;
     return Math.max(1, Math.min(PAGE_SIZE, rows - PAGE_CHROME));
+}
+
+/**
+ * Where the entry menu's cursor goes after one change to the commands: onto the line that
+ * changed, at its new place, so moving a line three steps is three times "Enter, Enter"
+ * instead of three trips down the menu.
+ *
+ * @param {CommandEdit} edit - as given to editCommands()
+ * @param {string[]} commands - the list after it
+ * @returns {number} an index into `commands`, the entry menu's value for that line
+ */
+export function focusAfter(edit, commands) {
+    const last = Math.max(commands.length - 1, 0);
+    switch (edit.type) {
+        case 'append':
+            return last;
+        case 'up':
+            return Math.max(edit.index - 1, 0);
+        case 'down':
+            return Math.min(edit.index + 1, last);
+        default:
+            return Math.min(edit.index, last);
+    }
+}
+
+/**
+ * A question cut to one terminal line.
+ *
+ * pageSizeFor() budgets one line for the question above a list; a long command line in
+ * "Command 3: …" would wrap onto several and push the menu past the bottom of the screen,
+ * where erasing it cannot reach. Three columns go to the "? " in front and the cursor.
+ *
+ * @param {string} text
+ * @param {number | undefined} columns - `stdout.columns`; unknown means "leave it"
+ * @returns {string}
+ */
+export function fitLine(text, columns) {
+    if (columns === undefined) return text;
+    const room = Math.max(columns - 3, 1);
+    return text.length <= room ? text : `${text.slice(0, room - 1)}…`;
 }

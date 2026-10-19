@@ -17,6 +17,8 @@ import {
     customDraft,
     entryEditChoices,
     newChoiceIndex,
+    fitLine,
+    focusAfter,
     newChoiceValue,
     pageSizeFor,
     pendingModeQuestions,
@@ -437,7 +439,7 @@ describe('editing custom entries — the menus', () => {
             { name: '1. npm i', value: 0 },
             { name: '2. npm run seed', value: 1 },
             { name: '+ Add a command', value: 'append' },
-            { name: 'Delete "seed db" from the preset', value: 'delete' },
+            { name: 'Delete "seed db" from the preset (unchecks it)', value: 'delete' },
             { name: 'Done', value: 'done' },
         ]);
     });
@@ -549,7 +551,7 @@ describe('screenChoices — the list as the screen draws it', () => {
     const configs = [{ name: 'web', description: 'npm' }, { name: 'api', description: '' }];
     const { choices: base } = buildInitialSelection(configs, [{ name: 'web', mode: 'run' }, seed]);
     const SEED = customChoiceValue(1);
-    const screen = (over = {}) => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [], deleted: new Set(), ...over });
+    const screen = (over = {}) => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [], ...over });
 
     test('the IDE list, then the preset\'s custom entries; only those are editable', () => {
         assert.deepEqual(screenChoices(base, screen()), [
@@ -575,12 +577,6 @@ describe('screenChoices — the list as the screen draws it', () => {
         const added = [{ name: 'lint', mode: 'terminal', commands: ['npm run lint'] }];
         const items = screenChoices(base, screen({ added, checked: new Set([newChoiceValue(0)]) }));
         assert.deepEqual(items[3], { name: '⌘ lint — npm run lint', value: newChoiceValue(0), checked: true, editable: true });
-    });
-
-    test('a deleted entry leaves the list, whichever kind it is', () => {
-        const added = [{ name: 'lint', mode: 'terminal', commands: ['x'] }];
-        const items = screenChoices(base, screen({ added, deleted: new Set([SEED, newChoiceValue(0)]) }));
-        assert.deepEqual(items.map((item) => item.value), ['web', 'api']);
     });
 
     test('a new entry\'s value is never a configuration\'s or a saved custom entry\'s', () => {
@@ -611,8 +607,8 @@ describe('splitSelection — what the list hands to the save', () => {
         });
     });
 
-    test('a new entry that was deleted is not in the list, so it is not saved', () => {
-        assert.deepEqual(splitSelection([item(newChoiceValue(1), true)], added).added, [added[1]]);
+    test('a new entry left unchecked is not saved', () => {
+        assert.deepEqual(splitSelection([item(newChoiceValue(0), false), item(newChoiceValue(1), true)], added).added, [added[1]]);
     });
 
     test('the selection never asks a mode question about a new entry', () => {
@@ -626,7 +622,7 @@ describe('the list\'s screen state — pure transitions', () => {
     const other = { name: 'other', mode: 'terminal', commands: ['x'] };
     const preset = [{ name: 'web', mode: 'run' }, seed, other];
     const SEED = customChoiceValue(1);
-    const fresh = () => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [], deleted: new Set() });
+    const fresh = () => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [] });
 
     test('newChoiceIndex reads back newChoiceValue, and is -1 for anything else', () => {
         assert.equal(newChoiceIndex(newChoiceValue(0)), 0);
@@ -689,10 +685,12 @@ describe('the list\'s screen state — pure transitions', () => {
         assert.ok(!applyEntryEdit(preset, unchecked, SEED, { name: 'seed db', commands: ['npm i', 'npm run seed'] }).checked.has(SEED));
     });
 
-    test('applyEntryEdit with null deletes: the row is gone, and that is the only record of it', () => {
+    test('applyEntryEdit with null deletes by unchecking: the row stays, so space undoes it', () => {
         const next = applyEntryEdit(preset, fresh(), SEED, null);
-        assert.deepEqual([...next.deleted], [SEED]);
-        assert.deepEqual(splitSelection(screenChoices(buildInitialSelection([{ name: 'web' }], preset).choices, next), next.added).selection, ['web']);
+        const items = screenChoices(buildInitialSelection([{ name: 'web' }], preset).choices, next);
+
+        assert.deepEqual(items.find((item) => item.value === SEED)?.checked, false);
+        assert.deepEqual(splitSelection(items, next.added).selection, ['web']);
     });
 
     test('takenNames for a new entry: every saved custom name, every name given on this screen', () => {
@@ -708,12 +706,12 @@ describe('the list\'s screen state — pure transitions', () => {
         assert.deepEqual(takenNames(preset, screen, newChoiceValue(0)).sort(), ['other', 'seed db']);
     });
 
-    test('a new entry deleted again frees its name; a deleted saved entry does not', () => {
+    test('a deleted entry, saved or new, keeps its name: its row is still there to check again', () => {
         let screen = fresh();
         ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
         screen = applyEntryEdit(preset, screen, newChoiceValue(0), null);
         screen = applyEntryEdit(preset, screen, SEED, null);
-        assert.deepEqual(takenNames(preset, screen).sort(), ['other', 'seed db']);
+        assert.deepEqual(takenNames(preset, screen).sort(), ['lint', 'other', 'seed db']);
     });
 });
 
@@ -723,7 +721,7 @@ describe('two custom entries of one name (a hand-edited file the store accepts)'
         { name: 'x', mode: 'terminal', commands: ['echo second'] },
     ];
     const base = () => buildInitialSelection([], preset).choices;
-    const open = () => ({ checked: new Set(base().map((c) => c.value)), edits: new Map(), added: [], deleted: new Set() });
+    const open = () => ({ checked: new Set(base().map((c) => c.value)), edits: new Map(), added: [] });
     /** @param {object} screen */
     const save = (screen) => {
         const { selection } = splitSelection(screenChoices(base(), screen), []);
@@ -765,5 +763,40 @@ describe('pageSizeFor — a list that fits the terminal, so it can be erased in 
     test('never less than one row', () => {
         assert.equal(pageSizeFor(3), 1);
         assert.equal(pageSizeFor(0), 1);
+    });
+});
+
+describe('focusAfter — where the entry menu\'s cursor goes after a change to the commands', () => {
+    const after = (commands, edit) => focusAfter(edit, commands);
+
+    test('on the line that moved, at its new place', () => {
+        assert.equal(after(['b', 'a', 'c'], { type: 'up', index: 1 }), 0);
+        assert.equal(after(['a', 'c', 'b'], { type: 'down', index: 1 }), 2);
+    });
+
+    test('a move past either end stays where it was', () => {
+        assert.equal(after(['a', 'b'], { type: 'up', index: 0 }), 0);
+        assert.equal(after(['a', 'b'], { type: 'down', index: 1 }), 1);
+    });
+
+    test('on the changed line, the new last line, or the line that took a removed one\'s place', () => {
+        assert.equal(after(['a', 'x'], { type: 'replace', index: 1, line: 'x' }), 1);
+        assert.equal(after(['a', 'b', 'c'], { type: 'append', line: 'c' }), 2);
+        assert.equal(after(['a', 'c'], { type: 'remove', index: 1 }), 1);
+        assert.equal(after(['a'], { type: 'remove', index: 1 }), 0);
+    });
+});
+
+describe('fitLine — a question that cannot wrap', () => {
+    test('left alone when it fits, or when the width is unknown', () => {
+        assert.equal(fitLine('Command 1: npm i', 80), 'Command 1: npm i');
+        assert.equal(fitLine('x'.repeat(300), undefined), 'x'.repeat(300));
+    });
+
+    test('cut with an ellipsis to leave room for the "? " in front and the cursor after', () => {
+        const line = fitLine(`Command 1: ${'x'.repeat(100)}`, 40);
+        assert.equal(line.length, 37);
+        assert.ok(line.endsWith('…'));
+        assert.ok(line.startsWith('Command 1: xxx'));
     });
 });

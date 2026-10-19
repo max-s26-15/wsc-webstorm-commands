@@ -20,6 +20,8 @@ import {
     diffPreset,
     editCommands,
     entryEditChoices,
+    fitLine,
+    focusAfter,
     pageSizeFor,
     pendingModeQuestions,
     screenChoices,
@@ -103,13 +105,16 @@ export async function runConfigure(opts) {
     }
 
     const ideNames = configs.map((config) => config.name);
+    // Every list and question opened from the list has to fit the terminal, or erasing it to
+    // draw the next one cannot reach what scrolled off: see pageSizeFor() and fitLine().
     const pageSize = pageSizeFor(stdout.rows);
+    /** @param {string} text */
+    const fit = (text) => fitLine(text, stdout.columns);
     /** @type {Screen} */
     let screen = {
         checked: new Set(choices.filter((choice) => choice.checked).map((choice) => choice.value)),
         edits: new Map(),
         added: [],
-        deleted: new Set(),
     };
 
     /** @type {string[]} */
@@ -125,7 +130,7 @@ export async function runConfigure(opts) {
         let active = 0;
         for (;;) {
             const result = await prompts.checkbox({
-                message: `Configurations to launch by default (preset "${presetName}")`,
+                message: fit(`Configurations to launch by default (preset "${presetName}")`),
                 choices: screenChoices(choices, screen),
                 active,
                 pageSize,
@@ -137,7 +142,7 @@ export async function runConfigure(opts) {
             // `focus` is where the cursor goes when the list comes back: the entry just touched.
             const { screen: next, focus } = result.action === 'new'
                 ? await addFromList({ prompts, before, screen, ideNames })
-                : await editFromList({ prompts, before, screen, ideNames, pageSize, value: /** @type {string} */ (result.value) });
+                : await editFromList({ prompts, before, screen, ideNames, pageSize, fit, value: /** @type {string} */ (result.value) });
             screen = next;
             const items = screenChoices(choices, screen);
             const at = items.findIndex((item) => item.value === focus);
@@ -228,12 +233,16 @@ async function addFromList({ prompts, before, screen, ideNames }) {
  * Nothing is written here — the edits are applied with everything else on save, so Ctrl-C
  * anywhere still leaves the file as it was.
  *
- * @param {{ prompts: Prompts, before: PresetEntry[], screen: Screen, ideNames: string[], pageSize: number, value: string }} opts
+ * @param {{
+ *   prompts: Prompts, before: PresetEntry[], screen: Screen, ideNames: string[],
+ *   pageSize: number, fit: (text: string) => string, value: string,
+ * }} opts
  * @returns {Promise<{ screen: Screen, focus: string }>}
  */
-async function editFromList({ prompts, before, screen, ideNames, pageSize, value }) {
+async function editFromList({ prompts, before, screen, ideNames, pageSize, fit, value }) {
     const { draft, keep } = customDraft(before, screen, value);
-    const result = await editCustomEntry({ prompts, draft, taken: takenNames(before, screen, value), keep, ideNames, pageSize });
+    const taken = takenNames(before, screen, value);
+    const result = await editCustomEntry({ prompts, draft, taken, keep, ideNames, pageSize, fit });
     return { screen: applyEntryEdit(before, screen, value, result), focus: value };
 }
 
@@ -247,16 +256,25 @@ async function editFromList({ prompts, before, screen, ideNames, pageSize, value
  * @param {string[]} opts.keep - names it may keep whatever else has them (its own)
  * @param {string[]} opts.ideNames
  * @param {number} opts.pageSize - pageSizeFor() the terminal
+ * @param {(text: string) => string} opts.fit - fitLine() to the terminal
  * @returns {Promise<import('./configureLogic.js').CustomEdit | null>} `null` when deleted
  */
-async function editCustomEntry({ prompts, draft, taken, keep, ideNames, pageSize }) {
+async function editCustomEntry({ prompts, draft, taken, keep, ideNames, pageSize, fit }) {
     let { name, commands } = draft;
+    // Where each menu opens: the entry menu on what was just changed (focusAfter()), the line
+    // menu on the last action taken there, while it is still on offer — so repeating a move
+    // is Enter, Enter.
+    /** @type {'name' | 'append' | number | undefined} */
+    let focus;
+    /** @type {string | undefined} */
+    let lastOp;
 
     for (;;) {
         const action = await prompts.select(
             {
-                message: `Edit "${name}"`,
+                message: fit(`Edit "${name}"`),
                 choices: entryEditChoices({ name, commands }),
+                default: focus,
                 pageSize,
                 loop: false,
             },
@@ -280,25 +298,44 @@ async function editCustomEntry({ prompts, draft, taken, keep, ideNames, pageSize
                 )
             ).trim();
             if (typed !== '') name = typed;
+            focus = 'name';
         } else if (action === 'append') {
             const line = await askCommandLine(prompts, 'New command (empty to go back)');
-            if (line !== '') commands = editCommands(commands, { type: 'append', line });
+            if (line !== '') {
+                const edit = /** @type {const} */ ({ type: 'append', line });
+                commands = editCommands(commands, edit);
+                focus = focusAfter(edit, commands);
+            } else {
+                focus = 'append';
+            }
         } else {
             const index = /** @type {number} */ (action);
+            const choices = commandEditChoices(commands, index);
             const op = await prompts.select(
                 {
-                    message: `Command ${index + 1}: ${commands[index]}`,
-                    choices: commandEditChoices(commands, index),
+                    message: fit(`Command ${index + 1}: ${commands[index]}`),
+                    choices,
+                    default: choices.some((choice) => choice.value === lastOp && !choice.disabled) ? lastOp : undefined,
                     pageSize,
                     loop: false,
                 },
                 IN_PLACE,
             );
+            focus = index;
+            if (op === 'back') continue;
+            lastOp = op;
+
+            /** @type {import('./configureLogic.js').CommandEdit | undefined} */
+            let edit;
             if (op === 'replace') {
                 const line = await askCommandLine(prompts, `Command ${index + 1} (empty to keep it)`, commands[index]);
-                if (line !== '') commands = editCommands(commands, { type: 'replace', index, line });
-            } else if (op !== 'back') {
-                commands = editCommands(commands, { type: op, index });
+                if (line !== '') edit = { type: 'replace', index, line };
+            } else {
+                edit = { type: op, index };
+            }
+            if (edit) {
+                commands = editCommands(commands, edit);
+                focus = focusAfter(edit, commands);
             }
         }
     }

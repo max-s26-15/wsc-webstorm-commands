@@ -404,7 +404,8 @@ ones:
 - `n` adds one: a name, then the commands one at a time (an empty line ends the list). It comes back
   checked, under the cursor.
 - `e`, with the cursor on a custom entry, opens its menu: rename it, change, move or delete one of its
-  commands, add a command at the end, or delete the whole entry.
+  commands, add a command at the end, or delete the whole entry. Deleting unchecks it and leaves it in
+  the list, so space brings it back.
 
 An empty answer to any of those questions goes back without changing anything — an empty name or
 first command adds nothing, an empty new command adds nothing, an empty rename or change keeps what

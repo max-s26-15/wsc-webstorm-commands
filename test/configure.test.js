@@ -37,10 +37,12 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
  * @param {Error} [opts.throwsOnEdit] - make the first edit menu throw
  * @param {boolean} [opts.tty]
  * @param {number} [opts.rows] - the terminal's height, as stdout reports it
+ * @param {number} [opts.columns] - the terminal's width, as stdout reports it
  */
 async function configure(opts) {
     const stdout = fakeStream(opts.tty ?? true);
     if (opts.rows !== undefined) stdout.rows = opts.rows;
+    if (opts.columns !== undefined) stdout.columns = opts.columns;
     const stderr = fakeStream(opts.tty ?? true);
     const stdin = { isTTY: opts.tty ?? true };
     const asked = [];
@@ -51,6 +53,8 @@ async function configure(opts) {
     // test can see what an edit question was pre-filled with.
     const editAsked = [];
     const pageSizes = [];
+    // The cursor each edit menu opened on, as `[message, default]`.
+    const menuDefaults = [];
     const inputConfigs = [];
     const rejected = [];
     const menus = [...(opts.menus ?? [])];
@@ -71,10 +75,13 @@ async function configure(opts) {
             if (step.action === 'edit') assert.ok(config.choices[index]?.editable, `"${step.value}" is not editable`);
             return { ...step, checked: step.checked ?? current, active: index === -1 ? config.active : index };
         },
-        select: async (config) => {
+        select: async (config, context) => {
             if (!config.message.startsWith('Mode for')) {
+                // Opened from the list, so it must erase itself for the list to come back in place.
+                assert.equal(context?.clearPromptOnDone, true, `"${config.message}" is not IN_PLACE`);
                 editAsked.push(config.message);
                 pageSizes.push(config.pageSize);
+                menuDefaults.push([config.message, config.default]);
                 if (opts.throwsOnEdit) throw opts.throwsOnEdit;
                 const label = menus.shift();
                 const choice = label === undefined
@@ -92,7 +99,8 @@ async function configure(opts) {
         confirm: async () => assert.fail('the screen asks no yes/no question'),
         // Like the real prompt: a validate() that answers with a string rejects the line and
         // asks again, so a scripted refusal is followed by the next scripted answer.
-        input: async (config) => {
+        input: async (config, context) => {
+            assert.equal(context?.clearPromptOnDone, true, `"${config.message}" is not IN_PLACE`);
             inputConfigs.push(config);
             if (opts.throwsOnInput) throw opts.throwsOnInput;
             for (;;) {
@@ -117,7 +125,7 @@ async function configure(opts) {
         stdout: /** @type {any} */ (stdout),
     });
 
-    return { code, asked, customAsked, editAsked, inputConfigs, pageSizes, rejected, output: stdout.text() + stderr.text() };
+    return { code, asked, customAsked, editAsked, inputConfigs, menuDefaults, pageSizes, rejected, output: stdout.text() + stderr.text() };
 }
 
 describe('runConfigure — the interactive screen', () => {
@@ -899,14 +907,70 @@ describe('runConfigure — editing custom commands from the list', () => {
         }
     });
 
-    test('deletes the whole entry, which then leaves the list', async () => {
+    test('Delete unchecks the entry and keeps its row, so the save drops it', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const { asked, output } = await edit({ dir, menus: ['Delete "seed db" from the preset'] });
+            const { asked, output } = await edit({ dir, menus: ['Delete "seed db" from the preset (unchecks it)'] });
 
-            assert.equal(asked[1].choices.some((c) => c.value === SEED), false);
+            assert.equal(asked[1].choices.find((c) => c.value === SEED)?.checked, false);
             assert.deepEqual(await saved(dir), [{ name: 'web', mode: 'run' }]);
             assert.match(output, /- seed db/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a Delete by mistake is undone with space: checked again, nothing is lost', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { output } = await edit({
+                dir,
+                menus: ['Delete "seed db" from the preset (unchecks it)'],
+                checked: ['web', SEED],
+            });
+            assert.match(output, /unchanged/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('after a change the entry menu opens on the line it touched, and the line menu on the last action unless it is off', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const three = { ...seed, commands: ['a', 'b', 'c'] };
+            const { menuDefaults } = await edit({
+                dir,
+                config: { ...emptyConfig(), presets: { default: [{ name: 'web', mode: 'run' }, three] } },
+                menus: ['1. a', 'Move down', '2. a', 'Move down', '3. a'],
+            });
+            assert.deepEqual(menuDefaults, [
+                ['Edit "seed db"', undefined],
+                ['Command 1: a', undefined],
+                ['Edit "seed db"', 1],
+                ['Command 2: a', 'down'],
+                ['Edit "seed db"', 2],
+                ['Command 3: a', undefined],
+                ['Edit "seed db"', 2],
+            ]);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a long command is cut to the terminal\'s width in the question above its menu', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const long = { ...seed, commands: [`npm run ${'x'.repeat(200)}`] };
+            const { editAsked } = await configure({
+                dir,
+                columns: 60,
+                config: { ...emptyConfig(), presets: { default: [{ name: 'web', mode: 'run' }, long] } },
+                steps: editSeed,
+                menus: [`1. npm run ${'x'.repeat(200)}`],
+            });
+            const question = editAsked.find((m) => m.startsWith('Command 1'));
+            assert.equal(question.length, 57);
+            assert.ok(question.endsWith('…'));
         } finally {
             await cleanup();
         }
@@ -955,10 +1019,10 @@ describe('runConfigure — editing custom commands from the list', () => {
             const { asked, output } = await configure({
                 dir,
                 steps: [{ action: 'new' }, { action: 'edit', value: newChoiceValue(0) }],
-                menus: ['Delete "lint" from the preset'],
+                menus: ['Delete "lint" from the preset (unchecks it)'],
                 inputs: ['lint', 'npm run lint', ''],
             });
-            assert.equal(asked.at(-1).choices.some((c) => c.value === newChoiceValue(0)), false);
+            assert.equal(asked.at(-1).choices.find((c) => c.value === newChoiceValue(0))?.checked, false);
             assert.match(output, /unchanged/);
         } finally {
             await cleanup();

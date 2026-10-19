@@ -265,8 +265,8 @@ exercises it.
   could clear the announcement off the screen. The no-IDE path needs no catalogue for a preset made only of custom entries (the "WebStorm has
   saved no run configurations" error is raised only when a positional or a non-custom preset entry needs a catalogue),
   and `buildTabs()` never reads `entry.config` for them. In `--configure` the checkbox value of a custom
-  entry is `customChoiceValue(name)`, distinct from a configuration name, because a hand-edited file can
-  hold both under one name; an IDE that reports no configurations is no longer an error by itself (the
+  entry is `customChoiceValue(index)`, distinct from a configuration name, because a hand-edited file can
+  hold both under one name (and a position, not a name — see below); an IDE that reports no configurations is no longer an error by itself (the
   list is shown empty, and `n` still adds), but with *stale* preset entries it still is (exit 1) — rewriting the
   preset from an empty list would delete entries the IDE merely failed to show.
 - **Custom entries are added (`n`) and edited (`e`) from the `--configure` list itself.** The stock
@@ -283,11 +283,11 @@ exercises it.
   opened from the list is passed `IN_PLACE` for the same reason. **Every one of those prompts takes an
   empty answer as "back, nothing changed"** (an empty name or first command adds nothing; an empty rename
   or change keeps the old value): otherwise the only way out of a mis-picked menu item is Ctrl-C, which
-  discards the whole screen. The list's state is `Screen` (`checked`, `edits`, `added`, `deleted`); it is
+  discards the whole screen. The list's state is `Screen` (`checked`, `edits`, `added`); it is
   never mutated, and every transition beyond taking `checked` from what the list returned is a pure
   function in `configureLogic.js` returning a new one — `addCustomEntry()`, `customDraft()`,
   `applyEntryEdit()`, `takenNames()` — so `configure.js` only threads it through the prompts. Rows come from `screenChoices()`, the saved selection from `splitSelection()`;
-  a deletion is recorded in `deleted` alone (a row that is not drawn cannot be submitted checked).
+  no row ever leaves the list.
   `customDraft()` also returns `keep`, the entry's own names, which `validateCustomName()` accepts even
   when a run configuration has them — a hand-edited file can hold a custom entry called `web`. **No row is keyed by a name.** A saved custom entry is
   `customChoiceValue(index)`, its position in the preset as read — the store accepts two custom entries of
@@ -299,16 +299,23 @@ exercises it.
   them in place (position and unknown keys kept) and
   `diffPreset(before, after, edits)` uses the same map to report a rename as `~ old: renamed to new`
   instead of `-`/`+`, and compares `commands` as lists (`['a','b']` and `['a && b']` print alike).
-  "Delete" in the entry's menu takes the row off the list (`deleted`, nothing else). An edit that changed
+  "Delete" in the entry's menu *unchecks* the row and leaves it in the list (the label says so): the
+  save drops it like any unchecked row, and a Delete picked by mistake — it sits just above "Done", with
+  no confirmation — is undone with space instead of Ctrl-C, which loses the whole screen. An edit that changed
   something checks the row again (`applyEntryEdit()`): an unchecked row is dropped on save, and nobody
   edits an entry to have it dropped; opening the menu and leaving it untouched changes nothing. Every
   list and menu gets `pageSizeFor(stdout.rows)` rows — `@inquirer/core` does not clamp `pageSize`, and
-  erasing cannot reach lines that scrolled off the top. A saved entry's name stays taken
-  even once unchecked or deleted (`customNamesInUse()`); an entry added and deleted on the same screen was
-  never saved, so its name is free again. Every command line typed on the screen goes through
+  erasing cannot reach lines that scrolled off the top — and every question above one goes through
+  `fitLine(text, stdout.columns)`, since a long command in `Command 3: …` would wrap past that budget.
+  After a change the entry menu opens on the line that changed, at its new place (`focusAfter()`), and the
+  line menu on the last action while it is still offered, so moving a line three steps is Enter, Enter
+  three times. Every name stays taken while its row is in the list — saved or added, unchecked or
+  deleted (`takenNames()`), since a deleted row can be checked again. Every command line typed on the screen goes through
   `validateCustomCommand()`, the store's own rule — before it, adding let a control character through and
   wrote a file the next read refused. The last command of an entry cannot be deleted (an empty `commands`
-  does not load); the menu says to delete the entry instead. `test/editableCheckbox.test.js` drives the
+  does not load); the menu says to delete the entry instead. The fake `select`/`input` in
+  `test/configure.test.js` fail any prompt opened from the list without `IN_PLACE`, which nothing else
+  would notice. `test/editableCheckbox.test.js` drives the
   real prompt through fake `input`/`output` streams (`createPrompt` takes both in its context) and pins
   the `@inquirer/core` behaviour it depends on: the result shape, the keybindings reaching `pressKey()`,
   and the erase on `e`/`n` read off the tail `ScreenManager.done()` writes (`eraseLines` vs `\n`). How
