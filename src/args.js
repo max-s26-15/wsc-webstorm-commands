@@ -34,6 +34,8 @@ export const OPTIONS = {
     fallback: { type: 'string' },
     completion: { type: 'string' },
     'delete-preset': { type: 'string' },
+    stop: { type: 'boolean' },
+    restart: { type: 'boolean' },
 };
 
 /**
@@ -59,7 +61,25 @@ export const LAUNCH_ONLY_FLAGS = /** @type {const} */ (['target', 'debug-port', 
  * Refusing beats printing the same 13 lines and leaving the user to work out that half
  * their command line did nothing.
  */
-export const LIST_IGNORED_FLAGS = /** @type {const} */ ([...LAUNCH_ONLY_FLAGS, 'preset']);
+export const LIST_IGNORED_FLAGS = /** @type {const} */ ([...LAUNCH_ONLY_FLAGS, 'preset', 'stop', 'restart']);
+
+/**
+ * Flags that mean nothing to `--stop`.
+ *
+ * A stop starts nothing, so where a launch would go (--target) and which inspector port it would
+ * take (--debug-port) are both beside the point. --dry-run, --preset and the IDE flags keep their
+ * meaning: what would be stopped, out of which presets, in which IDE.
+ */
+export const STOP_IGNORED_FLAGS = /** @type {const} */ (['target', 'debug-port']);
+
+/**
+ * Flags that mean nothing to `--restart`.
+ *
+ * A restart keeps every entry where it runs, or moves it where its preset now puts it, so
+ * --target has nothing to steer. --debug-port does: an entry whose preset now says debug is
+ * launched anew, and may need an inspector port.
+ */
+export const RESTART_IGNORED_FLAGS = /** @type {const} */ (['target']);
 
 /**
  * Flags that mean nothing to `--delete-preset`.
@@ -179,6 +199,8 @@ export function parseRequests(tokens, opts = {}) {
  *   fallback?: string,
  *   completion?: string,
  *   'delete-preset'?: string,
+ *   stop?: boolean,
+ *   restart?: boolean,
  * }} CliValues
  */
 

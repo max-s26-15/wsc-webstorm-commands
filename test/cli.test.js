@@ -1793,3 +1793,55 @@ describe('Windows: terminal launches need a POSIX shell', () => {
         assert.equal(r.executed.length, 1);
     });
 });
+
+describe('runCli — --stop and --restart: the command line', () => {
+    const CONFIG = JSON.stringify({ presets: { dev: [{ name: 'web' }] } });
+
+    /** Run in a throwaway project; any contact with the IDE fails loudly. @param {string[]} argv */
+    async function control(argv) {
+        const { dir, cleanup } = await tmpProject(CONFIG);
+        try {
+            const h = fakeCliDeps({ cwd: dir });
+            h.deps.discoverPort = async () => { throw new Error('discoverPort must not be called'); };
+            h.deps.connectMcp = async () => { throw new Error('connectMcp must not be called'); };
+            const code = await runCli(argv, h.deps);
+            return { code, stderr: h.stderr() };
+        } finally {
+            await cleanup();
+        }
+    }
+
+    const refused = {
+        'both at once': [['--stop', '--restart'], /--stop and --restart/],
+        '--stop with --configure': [['--stop', '--configure'], /--configure/],
+        '--restart with --list': [['--restart', '--list'], /--list/],
+        '--delete-preset with --stop': [['--delete-preset', 'dev', '--stop'], /--stop/],
+        '--completion with --restart': [['--completion', 'zsh', '--restart'], /--completion/],
+        '--stop with --target': [['--stop', '--target=terminal'], /--target/],
+        '--restart with --target': [['--restart', '--target=terminal'], /--target/],
+        '--stop with --debug-port': [['--stop', '--debug-port', '9300'], /--debug-port/],
+        '--restart with --fallback=terminal': [['--restart', '--fallback=terminal'], /--fallback=retry/],
+    };
+
+    for (const [what, [argv, message]] of Object.entries(refused)) {
+        test(`${what} is a usage error, decided before the IDE is contacted`, async () => {
+            const result = await control(argv);
+            assert.equal(result.code, 2);
+            assert.match(result.stderr, message);
+            // Refused because it means two things, not because the flag is unknown.
+            assert.doesNotMatch(result.stderr, /unknown option/i);
+        });
+    }
+
+    test('--restart takes --debug-port: a new setup may launch an entry in debug', async () => {
+        const result = await control(['--restart', '--debug-port', '9300', '--dry-run']);
+        assert.notEqual(result.code, 2, result.stderr);
+    });
+
+    test('--help names both', async () => {
+        const h = fakeCliDeps();
+        assert.equal(await runCli(['--help'], h.deps), 0);
+        assert.match(h.stdout(), /--stop\b/);
+        assert.match(h.stdout(), /--restart\b/);
+    });
+});

@@ -6,6 +6,8 @@ import {
     DELETE_PRESET_IGNORED_FLAGS,
     LAUNCH_ONLY_FLAGS,
     LIST_IGNORED_FLAGS,
+    RESTART_IGNORED_FLAGS,
+    STOP_IGNORED_FLAGS,
     UsageError,
     parseCliArgs,
     parseRequests,
@@ -92,6 +94,10 @@ Options:
                           (launch without it). Default: ask, if there is a terminal to ask in
       --completion <sh>   print a Tab-completion script (zsh or bash), and stop
       --delete-preset <n> delete a preset from the project's preset file
+      --stop              stop what runs from the presets (all of them, or --preset / names);
+                          needs wsc Companion
+      --restart           restart it, in the same tabs; an entry whose preset now has another
+                          mode is stopped and launched anew
   -h, --help              show this help
   -v, --version           show version
 
@@ -104,6 +110,8 @@ Examples:
   wsc --target=terminal web           launch everything in Terminal tabs instead
   wsc -c                              edit the default preset interactively
   wsc --delete-preset old-one         delete the "old-one" preset, without contacting the IDE
+  wsc --restart                       restart whatever runs from any preset, nothing else
+  wsc --stop --preset backend         stop what runs from the "backend" preset
   wsc --fallback=retry web            wait for WebStorm to come up, then launch
   wsc --fallback=terminal web         launch in OS terminal tabs, without WebStorm
   source <(wsc --completion zsh)      in ~/.zshrc: Tab completes flags, presets and configurations
@@ -643,6 +651,27 @@ async function run(argv, deps) {
         }
     }
 
+    // --stop and --restart are a sixth and seventh intent: they act on what is already running,
+    // so a command line that also edits, lists or steers a launch means two things at once.
+    // Refused before anything is read, like every other intent's stray flags.
+    const control = values.stop ? 'stop' : values.restart ? 'restart' : null;
+    if (values.stop && values.restart) {
+        throw new UsageError('--stop and --restart are two commands; pick one');
+    }
+    if (control !== null) {
+        const other = values.configure ? 'configure' : values.list ? 'list' : null;
+        if (other !== null) {
+            throw new UsageError(`--${control} and --${other} are two different commands; pick one`);
+        }
+        const ignored = passedFlags(values, control === 'stop' ? STOP_IGNORED_FLAGS : RESTART_IGNORED_FLAGS);
+        if (ignored.length > 0) {
+            const why = control === 'stop' ? 'starts nothing' : 'keeps each entry where its preset puts it';
+            throw new UsageError(
+                `--${control} ${why}, so ${ignored.map((flag) => `--${flag}`).join(' and ')} would be ignored`,
+            );
+        }
+    }
+
     // Editing a preset and naming configurations to launch are different intents;
     // accepting both would silently ignore one of them. Checked before the IDE is
     // contacted so the mistake is reported instantly.
@@ -702,6 +731,9 @@ async function run(argv, deps) {
     if (values.configure && fallback === 'terminal') {
         throw new UsageError('--configure has nothing to launch in a terminal; --fallback=retry waits for the IDE');
     }
+    if (control !== null && fallback === 'terminal') {
+        throw new UsageError(`--${control} acts on what runs in the IDE; --fallback=retry waits for it`);
+    }
 
     // ── Project and preset (no IDE needed yet) ───────────────────────────────
     const target = resolveTarget(values.target);
@@ -722,6 +754,7 @@ async function run(argv, deps) {
     if (deleting) {
         return await runDeletePreset({ projectRoot, config, name: values['delete-preset'] ?? '', log });
     }
+    if (control !== null) throw new WscError('not implemented');
     // `--preset a b` and `--preset a --preset b` name several presets, launched together as
     // if they were one: entries in the order given, and a configuration in more than one
     // keeps its first position with the last mode — the rule buildLaunchPlan() already has
