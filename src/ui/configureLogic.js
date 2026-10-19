@@ -16,21 +16,31 @@ export { DEFAULT_MODE };
 const CUSTOM_PREFIX = '\u0000custom\u0000';
 
 /**
- * A custom entry's value in the checkbox.
+ * A saved custom entry's value in the checkbox: its position in the preset being edited.
  *
  * Distinct from any configuration name — those are the raw names the IDE reported — so a
  * custom entry and a run configuration of the same name (a hand-edited file can have both)
- * are two different choices and cannot answer for one another.
+ * are two different choices and cannot answer for one another. A position and not a name,
+ * because the store accepts two custom entries of one name: keyed by name they were one
+ * row, and editing or unchecking either changed both.
  *
- * @param {string} name
+ * @param {number} index - in the preset as it was when the screen opened
  * @returns {string}
  */
-export function customChoiceValue(name) {
-    return `${CUSTOM_PREFIX}${name}`;
+export function customChoiceValue(index) {
+    return `${CUSTOM_PREFIX}${index}`;
 }
 
 /** @param {string} value */
 const isCustomChoiceValue = (value) => value.startsWith(CUSTOM_PREFIX);
+
+/**
+ * The position customChoiceValue() was given, or -1 for any other value.
+ *
+ * @param {string} value
+ * @returns {number}
+ */
+const customChoiceIndex = (value) => (isCustomChoiceValue(value) ? Number(value.slice(CUSTOM_PREFIX.length)) : -1);
 
 const NEW_PREFIX = '\u0000new\u0000';
 
@@ -82,8 +92,8 @@ const customLabel = (entry) => `⌘ ${entry.name} — ${customCommandLine(entry.
  * @typedef {import('../presets/store.js').PresetEntry} PresetEntry
  * @typedef {{ name: string, value: string, checked: boolean, mode: import('../modes.js').LaunchMode | null }} Choice
  *
- * What the edit screen did to one custom entry, keyed elsewhere by the name the entry had
- * when the screen opened — a rename changes its name, not which entry it is.
+ * What the edit screen did to one saved custom entry, keyed elsewhere by its list value
+ * (customChoiceValue(), its position) — a rename changes its name, not which entry it is.
  * @typedef {{ name: string, commands: string[] }} CustomEdit
  * @typedef {Map<string, CustomEdit>} CustomEdits
  *
@@ -127,12 +137,9 @@ export function buildInitialSelection(runConfigs, preset = []) {
 
     // After the IDE's list, in the order the preset has them; always checked, because
     // unchecking is how one is deleted.
-    const customChoices = preset.filter(isCustomEntry).map((entry) => ({
-        name: customLabel(entry),
-        value: customChoiceValue(entry.name),
-        checked: true,
-        mode: entry.mode,
-    }));
+    const customChoices = preset.flatMap((entry, index) => (isCustomEntry(entry)
+        ? [{ name: customLabel(entry), value: customChoiceValue(index), checked: true, mode: entry.mode }]
+        : []));
 
     return { choices: [...ideChoices, ...customChoices], stale };
 }
@@ -171,14 +178,15 @@ export function applyAnswersToPreset(selection, modes = {}, preset = [], added =
     const selectedNames = new Set(selection.filter((value) => !isCustomChoiceValue(value)));
     const keptCustom = new Set(selection.filter(isCustomChoiceValue));
 
-    const kept = preset
-        .filter((entry) =>
-            isCustomEntry(entry) ? keptCustom.has(customChoiceValue(entry.name)) : selectedNames.has(entry.name))
-        .map((entry) => {
-            if (!isCustomEntry(entry)) return { ...entry, mode: answered(modes, entry.name) ?? entry.mode };
-            const edit = edits.get(entry.name);
-            return edit ? { ...entry, name: edit.name, commands: edit.commands } : entry;
-        });
+    const kept = preset.flatMap((entry, index) => {
+        if (!isCustomEntry(entry)) {
+            return selectedNames.has(entry.name) ? [{ ...entry, mode: answered(modes, entry.name) ?? entry.mode }] : [];
+        }
+        const value = customChoiceValue(index);
+        if (!keptCustom.has(value)) return [];
+        const edit = edits.get(value);
+        return [edit ? { ...entry, name: edit.name, commands: edit.commands } : entry];
+    });
 
     const keptNames = new Set(kept.filter((entry) => !isCustomEntry(entry)).map((entry) => entry.name));
     const appended = selection
@@ -211,14 +219,18 @@ function answered(modes, name) {
  * @returns {{ added: string[], removed: string[], changed: string[], unchanged: boolean }}
  */
 export function diffPreset(before, after, edits = new Map()) {
-    /** @param {PresetEntry} entry - from `before`; the key it is found under in `after` */
-    const keyAfter = (entry) => entryKey(entry, (isCustomEntry(entry) && edits.get(entry.name)?.name) || entry.name);
+    /**
+     * @param {PresetEntry} entry - from `before`; the key it is found under in `after`
+     * @param {number} index - its position in `before`
+     */
+    const keyAfter = (entry, index) =>
+        entryKey(entry, (isCustomEntry(entry) && edits.get(customChoiceValue(index))?.name) || entry.name);
 
-    const previous = new Map(before.map((entry) => [keyAfter(entry), entry]));
+    const previous = new Map(before.map((entry, index) => [keyAfter(entry, index), entry]));
     const afterKeys = new Set(after.map((entry) => entryKey(entry)));
 
     const added = after.filter((entry) => !previous.has(entryKey(entry))).map((entry) => entry.name);
-    const removed = before.filter((entry) => !afterKeys.has(keyAfter(entry))).map((entry) => entry.name);
+    const removed = before.filter((entry, index) => !afterKeys.has(keyAfter(entry, index))).map((entry) => entry.name);
 
     /** @type {string[]} */
     const changed = [];
@@ -332,17 +344,18 @@ export function editCommands(commands, edit) {
  *
  * @param {PresetEntry[]} preset - as it was when the screen opened
  * @param {CustomEdits} [edits]
- * @param {string} [except] - the original name of the entry being renamed
+ * @param {string} [except] - the list value of the entry being renamed
  * @returns {string[]}
  */
 export function customNamesInUse(preset, edits = new Map(), except) {
     const names = new Set();
-    for (const entry of preset.filter(isCustomEntry)) {
-        if (entry.name === except) continue;
+    preset.forEach((entry, index) => {
+        const value = customChoiceValue(index);
+        if (!isCustomEntry(entry) || value === except) return;
         names.add(entry.name);
-        const edit = edits.get(entry.name);
+        const edit = edits.get(value);
         if (edit) names.add(edit.name);
-    }
+    });
     return [...names];
 }
 
@@ -386,7 +399,7 @@ export function commandEditChoices(commands, index) {
  * deletions applied. Only custom entries, saved or new, are editable.
  *
  * @param {Choice[]} base - from buildInitialSelection()
- * @param {Screen} screen - `edits` keyed by the name a saved entry had when the screen opened;
+ * @param {Screen} screen - `edits` keyed by a saved entry's list value (its position);
  *   `added` in the order added, never spliced; `deleted` the values removed with "Delete"
  * @returns {import('./checkboxKeys.js').Item[]}
  */
@@ -395,7 +408,7 @@ export function screenChoices(base, { checked, edits, added, deleted }) {
         if (!isCustomChoiceValue(choice.value)) {
             return { name: choice.name, value: choice.value, checked: checked.has(choice.value), editable: false };
         }
-        const edit = edits.get(choice.value.slice(CUSTOM_PREFIX.length));
+        const edit = edits.get(choice.value);
         return {
             name: edit ? customLabel(edit) : choice.name,
             value: choice.value,
@@ -435,7 +448,8 @@ export function splitSelection(items, added) {
  * @param {string} value
  */
 function savedEntry(preset, value) {
-    return preset.filter(isCustomEntry).find((entry) => customChoiceValue(entry.name) === value);
+    const entry = preset[customChoiceIndex(value)];
+    return entry && isCustomEntry(entry) ? entry : undefined;
 }
 
 /**
@@ -472,7 +486,7 @@ export function customDraft(preset, screen, value) {
     }
     const saved = savedEntry(preset, value);
     const name = saved?.name ?? '';
-    const draft = screen.edits.get(name) ?? { name, commands: saved?.commands ?? [] };
+    const draft = screen.edits.get(value) ?? { name, commands: saved?.commands ?? [] };
     return { draft, keep: [name, draft.name] };
 }
 
@@ -480,7 +494,9 @@ export function customDraft(preset, screen, value) {
  * What the entry's menu ended with: an edit, or `null` for "Delete".
  *
  * Deleting takes the row off the list; `deleted` is the only record of it, since a row that
- * is not drawn cannot be submitted checked.
+ * is not drawn cannot be submitted checked. An edit that changed something also checks the
+ * row: an unchecked row is dropped on save, and nobody edits an entry to have it dropped.
+ * Opening the menu and leaving it untouched changes nothing, the check included.
  *
  * @param {PresetEntry[]} preset
  * @param {Screen} screen
@@ -491,14 +507,17 @@ export function customDraft(preset, screen, value) {
 export function applyEntryEdit(preset, screen, value, result) {
     if (result === null) return { ...screen, deleted: new Set([...screen.deleted, value]) };
 
+    const { draft } = customDraft(preset, screen, value);
+    const changed = draft.name !== result.name || JSON.stringify(draft.commands) !== JSON.stringify(result.commands);
+    const checked = changed ? new Set([...screen.checked, value]) : screen.checked;
+
     const index = newChoiceIndex(value);
     if (index !== -1) {
         const added = [...screen.added];
         added[index] = { ...added[index], ...result };
-        return { ...screen, added };
+        return { ...screen, added, checked };
     }
-    const saved = savedEntry(preset, value);
-    return saved ? { ...screen, edits: new Map([...screen.edits, [saved.name, result]]) } : screen;
+    return savedEntry(preset, value) ? { ...screen, edits: new Map([...screen.edits, [value, result]]), checked } : screen;
 }
 
 /**
@@ -513,9 +532,32 @@ export function applyEntryEdit(preset, screen, value, result) {
  * @returns {string[]}
  */
 export function takenNames(preset, screen, except) {
-    const original = except === undefined ? undefined : savedEntry(preset, except)?.name;
     const fresh = screen.added
         .filter((_, index) => newChoiceValue(index) !== except && !screen.deleted.has(newChoiceValue(index)))
         .map((entry) => entry.name);
-    return [...customNamesInUse(preset, screen.edits, original), ...fresh];
+    return [...customNamesInUse(preset, screen.edits, except), ...fresh];
+}
+
+/** Rows shown at once when the terminal has room: a typical project's whole list. */
+const PAGE_SIZE = 20;
+
+/**
+ * Lines a list or menu needs besides its rows: the question, the blank line and the key line,
+ * plus one for a key line that wraps on a narrow terminal.
+ */
+const PAGE_CHROME = 4;
+
+/**
+ * How many rows a list or menu on this screen may show, for a terminal `rows` lines tall.
+ *
+ * Nothing in `@inquirer/core` clamps `pageSize` to the terminal, and this screen depends on
+ * erasing a list to draw the next menu in its place — which cannot reach lines that have
+ * already scrolled off the top. So a list taller than the terminal would leave stale copies.
+ *
+ * @param {number | undefined} rows - `stdout.rows`; unknown means "assume room"
+ * @returns {number}
+ */
+export function pageSizeFor(rows) {
+    if (rows === undefined) return PAGE_SIZE;
+    return Math.max(1, Math.min(PAGE_SIZE, rows - PAGE_CHROME));
 }

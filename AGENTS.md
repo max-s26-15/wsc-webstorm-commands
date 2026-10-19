@@ -21,6 +21,8 @@ configuration behind it, launched as a named Terminal tab.
 Since then: Tab completion for zsh and bash (`wsc --completion <shell>`, `src/completion/`).
 Since then: `wsc --delete-preset <name>` — a fifth intent that edits `.idea/webstorm-commands.json`
 and never contacts the IDE.
+Since then: custom commands are added (`n`) and edited (`e`) from the `wsc -c` list itself, which is
+now wsc's own prompt (`src/ui/editableCheckbox.js` on `@inquirer/core`).
 Since then: public-release preparation — npm package `webstorm-commands` (MIT, `engines.node >=22`,
 `files` allow-list, a second bin `wsc-mcp-probe`), the plugin renamed **wsc Companion** (`dev.wsc.ide`,
 0.5.1, `untilBuild 262.*`, built against a downloaded WebStorm), CI on Linux/macOS/Windows × Node
@@ -281,26 +283,36 @@ exercises it.
   opened from the list is passed `IN_PLACE` for the same reason. **Every one of those prompts takes an
   empty answer as "back, nothing changed"** (an empty name or first command adds nothing; an empty rename
   or change keeps the old value): otherwise the only way out of a mis-picked menu item is Ctrl-C, which
-  discards the whole screen. The list's state is `Screen` (`checked`, `edits`, `added`, `deleted`) and
-  every transition of it is a pure function in `configureLogic.js` returning a new one —
-  `addCustomEntry()`, `customDraft()`, `applyEntryEdit()`, `takenNames()` — so `configure.js` only threads
-  it through the prompts. Rows come from `screenChoices()`, the saved selection from `splitSelection()`;
+  discards the whole screen. The list's state is `Screen` (`checked`, `edits`, `added`, `deleted`); it is
+  never mutated, and every transition beyond taking `checked` from what the list returned is a pure
+  function in `configureLogic.js` returning a new one — `addCustomEntry()`, `customDraft()`,
+  `applyEntryEdit()`, `takenNames()` — so `configure.js` only threads it through the prompts. Rows come from `screenChoices()`, the saved selection from `splitSelection()`;
   a deletion is recorded in `deleted` alone (a row that is not drawn cannot be submitted checked).
   `customDraft()` also returns `keep`, the entry's own names, which `validateCustomName()` accepts even
-  when a run configuration has them — a hand-edited file can hold a custom entry called `web`. An entry added on this screen is keyed `newChoiceValue(index)` (read back with `newChoiceIndex()`) —
-  never its name, which `e` can change — and is taken out of the selection before anything reads it as a
-  configuration name (it would otherwise be asked a mode question). Edits of a *saved* entry are a
-  `CustomEdits` `Map` keyed by its name *as the screen opened*, because a rename changes the name and not
-  the entry; `applyAnswersToPreset()` applies them in place (position and unknown keys kept) and
+  when a run configuration has them — a hand-edited file can hold a custom entry called `web`. **No row is keyed by a name.** A saved custom entry is
+  `customChoiceValue(index)`, its position in the preset as read — the store accepts two custom entries of
+  one name, and keyed by name they were one row, so `e` on the second opened the first and the save
+  wrote the edit into both. An entry added on this screen is `newChoiceValue(index)` (read back with
+  `newChoiceIndex()`), and is taken out of the selection before anything reads it as a configuration
+  name (it would otherwise be asked a mode question). Neither changes when `e` renames the entry. Edits
+  of a saved entry are a `CustomEdits` `Map` keyed by that list value; `applyAnswersToPreset()` applies
+  them in place (position and unknown keys kept) and
   `diffPreset(before, after, edits)` uses the same map to report a rename as `~ old: renamed to new`
   instead of `-`/`+`, and compares `commands` as lists (`['a','b']` and `['a && b']` print alike).
-  "Delete" in the entry's menu takes it off the list and unchecks it. A saved entry's name stays taken
+  "Delete" in the entry's menu takes the row off the list (`deleted`, nothing else). An edit that changed
+  something checks the row again (`applyEntryEdit()`): an unchecked row is dropped on save, and nobody
+  edits an entry to have it dropped; opening the menu and leaving it untouched changes nothing. Every
+  list and menu gets `pageSizeFor(stdout.rows)` rows — `@inquirer/core` does not clamp `pageSize`, and
+  erasing cannot reach lines that scrolled off the top. A saved entry's name stays taken
   even once unchecked or deleted (`customNamesInUse()`); an entry added and deleted on the same screen was
   never saved, so its name is free again. Every command line typed on the screen goes through
   `validateCustomCommand()`, the store's own rule — before it, adding let a control character through and
   wrote a file the next read refused. The last command of an entry cannot be deleted (an empty `commands`
-  does not load); the menu says to delete the entry instead. The real list was checked through a pty with
-  a terminal emulator (`pyte`) snapshotting the screen, since erasing is the part a byte log cannot show.
+  does not load); the menu says to delete the entry instead. `test/editableCheckbox.test.js` drives the
+  real prompt through fake `input`/`output` streams (`createPrompt` takes both in its context) and pins
+  the `@inquirer/core` behaviour it depends on: the result shape, the keybindings reaching `pressKey()`,
+  and the erase on `e`/`n` read off the tail `ScreenManager.done()` writes (`eraseLines` vs `\n`). How
+  the screen *looks* was checked through a pty with a terminal emulator (`pyte`) snapshotting it.
 - **A Terminal tab is titled after the MCP *client* that opened it — so each one gets its own session.**
   `execute_terminal_command` has no tab-name parameter (schema read from the live IDE). Measured on
   WebStorm 2026.2.1: three calls from a client called `wsc` gave three tabs titled `wsc`; sessions called

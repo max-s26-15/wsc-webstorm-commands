@@ -411,10 +411,10 @@ first command adds nothing, an empty new command adds nothing, an empty rename o
 was there. `INQUIRER_KEYBINDINGS=vim` (`j`/`k`) and `=emacs` (`Ctrl-N`/`Ctrl-P`) move through the list
 as they do in every other `@inquirer` prompt.
 
-Unchecking a custom entry removes it too. A name cannot be the name of a run configuration, or of
-another custom command in the same preset. An edited entry keeps its place in the preset, and nothing
-is written until Enter submits the list, so Ctrl-C still leaves the file as it was. The summary names
-what changed:
+Unchecking a custom entry removes it too; changing an unchecked one with `e` checks it again. A name
+cannot be the name of a run configuration, or of another custom command in the same preset. An edited
+entry keeps its place in the preset, and nothing is written until Enter submits the list, so Ctrl-C
+still leaves the file as it was. The summary names what changed:
 
 ```
   ~ seed db: renamed to seed

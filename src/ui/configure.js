@@ -20,6 +20,7 @@ import {
     diffPreset,
     editCommands,
     entryEditChoices,
+    pageSizeFor,
     pendingModeQuestions,
     screenChoices,
     splitSelection,
@@ -29,12 +30,6 @@ import {
 } from './configureLogic.js';
 import { editableCheckbox } from './editableCheckbox.js';
 import { CANCELLED_EXIT_CODE, isCancelled } from './promptCancel.js';
-
-/**
- * Rows shown at once. Large enough that a typical project's whole list is visible
- * without scrolling; @inquirer/prompts clamps it to the terminal height anyway.
- */
-const PAGE_SIZE = 20;
 
 /**
  * Passed to every prompt opened from the list with `e` or `n`: each one erases itself when
@@ -108,6 +103,7 @@ export async function runConfigure(opts) {
     }
 
     const ideNames = configs.map((config) => config.name);
+    const pageSize = pageSizeFor(stdout.rows);
     /** @type {Screen} */
     let screen = {
         checked: new Set(choices.filter((choice) => choice.checked).map((choice) => choice.value)),
@@ -132,16 +128,16 @@ export async function runConfigure(opts) {
                 message: `Configurations to launch by default (preset "${presetName}")`,
                 choices: screenChoices(choices, screen),
                 active,
-                pageSize: PAGE_SIZE,
+                pageSize,
             });
-            screen.checked = new Set(result.checked);
+            screen = { ...screen, checked: new Set(result.checked) };
             active = result.active;
             if (result.action === 'submit') break;
 
             // `focus` is where the cursor goes when the list comes back: the entry just touched.
             const { screen: next, focus } = result.action === 'new'
                 ? await addFromList({ prompts, before, screen, ideNames })
-                : await editFromList({ prompts, before, screen, ideNames, value: /** @type {string} */ (result.value) });
+                : await editFromList({ prompts, before, screen, ideNames, pageSize, value: /** @type {string} */ (result.value) });
             screen = next;
             const items = screenChoices(choices, screen);
             const at = items.findIndex((item) => item.value === focus);
@@ -232,12 +228,12 @@ async function addFromList({ prompts, before, screen, ideNames }) {
  * Nothing is written here — the edits are applied with everything else on save, so Ctrl-C
  * anywhere still leaves the file as it was.
  *
- * @param {{ prompts: Prompts, before: PresetEntry[], screen: Screen, ideNames: string[], value: string }} opts
+ * @param {{ prompts: Prompts, before: PresetEntry[], screen: Screen, ideNames: string[], pageSize: number, value: string }} opts
  * @returns {Promise<{ screen: Screen, focus: string }>}
  */
-async function editFromList({ prompts, before, screen, ideNames, value }) {
+async function editFromList({ prompts, before, screen, ideNames, pageSize, value }) {
     const { draft, keep } = customDraft(before, screen, value);
-    const result = await editCustomEntry({ prompts, draft, taken: takenNames(before, screen, value), keep, ideNames });
+    const result = await editCustomEntry({ prompts, draft, taken: takenNames(before, screen, value), keep, ideNames, pageSize });
     return { screen: applyEntryEdit(before, screen, value, result), focus: value };
 }
 
@@ -250,9 +246,10 @@ async function editFromList({ prompts, before, screen, ideNames, value }) {
  * @param {string[]} opts.taken - custom names this entry cannot be renamed to
  * @param {string[]} opts.keep - names it may keep whatever else has them (its own)
  * @param {string[]} opts.ideNames
+ * @param {number} opts.pageSize - pageSizeFor() the terminal
  * @returns {Promise<import('./configureLogic.js').CustomEdit | null>} `null` when deleted
  */
-async function editCustomEntry({ prompts, draft, taken, keep, ideNames }) {
+async function editCustomEntry({ prompts, draft, taken, keep, ideNames, pageSize }) {
     let { name, commands } = draft;
 
     for (;;) {
@@ -260,7 +257,7 @@ async function editCustomEntry({ prompts, draft, taken, keep, ideNames }) {
             {
                 message: `Edit "${name}"`,
                 choices: entryEditChoices({ name, commands }),
-                pageSize: PAGE_SIZE,
+                pageSize,
                 loop: false,
             },
             IN_PLACE,
@@ -292,6 +289,7 @@ async function editCustomEntry({ prompts, draft, taken, keep, ideNames }) {
                 {
                     message: `Command ${index + 1}: ${commands[index]}`,
                     choices: commandEditChoices(commands, index),
+                    pageSize,
                     loop: false,
                 },
                 IN_PLACE,

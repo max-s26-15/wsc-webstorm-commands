@@ -36,9 +36,11 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
  *   out every menu answers with its last choice, which is always the way out
  * @param {Error} [opts.throwsOnEdit] - make the first edit menu throw
  * @param {boolean} [opts.tty]
+ * @param {number} [opts.rows] - the terminal's height, as stdout reports it
  */
 async function configure(opts) {
     const stdout = fakeStream(opts.tty ?? true);
+    if (opts.rows !== undefined) stdout.rows = opts.rows;
     const stderr = fakeStream(opts.tty ?? true);
     const stdin = { isTTY: opts.tty ?? true };
     const asked = [];
@@ -48,6 +50,7 @@ async function configure(opts) {
     // The edit menus, apart from `asked` for the same reason; and every input's config, so a
     // test can see what an edit question was pre-filled with.
     const editAsked = [];
+    const pageSizes = [];
     const inputConfigs = [];
     const rejected = [];
     const menus = [...(opts.menus ?? [])];
@@ -58,7 +61,7 @@ async function configure(opts) {
     const prompts = {
         // Answers like the real list: what it was left holding, how it was left, and where.
         checkbox: async (config) => {
-            asked.push({ type: 'checkbox', choices: config.choices, message: config.message, active: config.active });
+            asked.push({ type: 'checkbox', choices: config.choices, message: config.message, active: config.active, pageSize: config.pageSize });
             if (opts.throws) throw opts.throws;
             const current = config.choices.filter((c) => c.checked).map((c) => c.value);
             const step = steps.shift();
@@ -71,6 +74,7 @@ async function configure(opts) {
         select: async (config) => {
             if (!config.message.startsWith('Mode for')) {
                 editAsked.push(config.message);
+                pageSizes.push(config.pageSize);
                 if (opts.throwsOnEdit) throw opts.throwsOnEdit;
                 const label = menus.shift();
                 const choice = label === undefined
@@ -113,7 +117,7 @@ async function configure(opts) {
         stdout: /** @type {any} */ (stdout),
     });
 
-    return { code, asked, customAsked, editAsked, inputConfigs, rejected, output: stdout.text() + stderr.text() };
+    return { code, asked, customAsked, editAsked, inputConfigs, pageSizes, rejected, output: stdout.text() + stderr.text() };
 }
 
 describe('runConfigure — the interactive screen', () => {
@@ -592,7 +596,7 @@ describe('runConfigure — custom commands', () => {
 
             const custom = asked[0].choices.filter((c) => c.checked);
             assert.deepEqual(custom, [
-                { name: '⌘ seed db — npm i && npm run seed', value: customChoiceValue('seed db'), checked: true, editable: true },
+                { name: '⌘ seed db — npm i && npm run seed', value: customChoiceValue(0), checked: true, editable: true },
             ]);
             assert.ok(asked[0].choices.filter((c) => c !== custom[0]).every((c) => !c.editable));
             assert.match(output, /unchanged/, 'an untouched custom entry is not rewritten');
@@ -673,7 +677,7 @@ describe('runConfigure — custom commands', () => {
 describe('runConfigure — editing custom commands from the list', () => {
     const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
     const withSeed = () => ({ ...emptyConfig(), presets: { default: [{ name: 'web', mode: 'run' }, seed] } });
-    const SEED = customChoiceValue('seed db');
+    const SEED = customChoiceValue(1);
     const editSeed = [{ action: 'edit', value: SEED }];
 
     /** @param {object} opts */
@@ -714,19 +718,64 @@ describe('runConfigure — editing custom commands from the list', () => {
         }
     });
 
-    test('the list comes back as it was left: an entry unchecked before e stays unchecked', async () => {
+    test('an unchecked entry that is changed comes back checked: an edit is meant to be kept', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const { asked, output } = await edit({
+            const { asked } = await edit({
                 dir,
                 steps: [{ action: 'edit', value: SEED, checked: ['web'] }],
                 menus: ['Name: seed db'],
                 inputs: ['seed'],
             });
 
+            assert.equal(asked[1].choices.find((c) => c.value === SEED).checked, true);
+            assert.deepEqual((await saved(dir)).map((entry) => entry.name), ['web', 'seed']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('an unchecked entry opened and left untouched stays unchecked', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { asked, output } = await edit({ dir, steps: [{ action: 'edit', value: SEED, checked: ['web'] }] });
+
             assert.equal(asked[1].choices.find((c) => c.value === SEED).checked, false);
             assert.deepEqual(await saved(dir), [{ name: 'web', mode: 'run' }]);
             assert.match(output, /- seed db/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('in a short terminal the list and every menu fit on the screen', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { asked, pageSizes } = await edit({ dir, rows: 12, menus: ['1. npm i'] });
+            assert.ok(asked.every((a) => a.type !== 'checkbox' || a.pageSize === 8));
+            assert.deepEqual(pageSizes, [8, 8, 8]);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('of two custom entries with one name, e edits the one under the cursor and leaves the other', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const twins = [
+                { name: 'x', mode: 'terminal', commands: ['echo first'] },
+                { name: 'x', mode: 'terminal', commands: ['echo second'] },
+            ];
+            const { inputConfigs } = await configure({
+                dir,
+                config: { ...emptyConfig(), presets: { default: twins } },
+                steps: [{ action: 'edit', value: customChoiceValue(1) }],
+                menus: ['1. echo second', 'Change'],
+                inputs: ['echo edited'],
+            });
+
+            assert.equal(inputConfigs[0].default, 'echo second');
+            assert.deepEqual((await saved(dir)).map((entry) => entry.commands), [['echo first'], ['echo edited']]);
         } finally {
             await cleanup();
         }
@@ -739,7 +788,7 @@ describe('runConfigure — editing custom commands from the list', () => {
             const { rejected, output } = await configure({
                 dir,
                 config,
-                steps: editSeed,
+                steps: [{ action: 'edit', value: customChoiceValue(0) }],
                 menus: ['Name: seed db'],
                 inputs: ['web', 'other', 'seed db'],
             });
@@ -838,7 +887,7 @@ describe('runConfigure — editing custom commands from the list', () => {
             const { rejected, output } = await configure({
                 dir,
                 config,
-                steps: [{ action: 'edit', value: customChoiceValue('web') }],
+                steps: [{ action: 'edit', value: customChoiceValue(0) }],
                 menus: ['Name: web', 'Name: web', 'Name: www'],
                 inputs: ['web', 'www', 'web'],
             });
