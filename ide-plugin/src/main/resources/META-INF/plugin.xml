@@ -4,7 +4,7 @@
     <vendor url="https://github.com/max-s26-15/wsc-webstorm-commands">Max Soltys</vendor>
 
     <description><![CDATA[
-        Adds two tools to the IDE's built-in MCP Server, used by the <code>wsc</code> command line tool.
+        Adds tools to the IDE's built-in MCP Server, used by the <code>wsc</code> command line tool.
         <ul>
             <li><code>debug_run_configuration</code> starts an existing run configuration with the Debug executor,
             exactly like the Debug button does, so that <code>wsc name:debug</code> opens a real Debug tab instead of a
@@ -13,6 +13,10 @@
             <li><code>open_terminal_tab</code> opens a titled Terminal tab running the user's shell on a real terminal and
             executes a command in it. The IDE's own <code>execute_terminal_command</code> runs commands on pipes, so
             programs that draw their own screen show nothing there and Ctrl-C cannot reach them.</li>
+            <li><code>list_running</code>, <code>stop_run_configuration</code>, <code>restart_run_configuration</code>,
+            <code>stop_terminal_tab</code> and <code>restart_terminal_tab</code> let <code>wsc --stop</code> and
+            <code>wsc --restart</code> see what is running and stop or restart it in the same tab. Terminal tabs are
+            recognised by a mark <code>open_terminal_tab</code> keeps in memory, never on disk.</li>
         </ul>
         <p>Source code and the <code>wsc</code> command line tool:
         <a href="https://github.com/max-s26-15/wsc-webstorm-commands">github.com/max-s26-15/wsc-webstorm-commands</a> (MIT).</p>

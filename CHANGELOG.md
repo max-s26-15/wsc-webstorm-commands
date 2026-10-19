@@ -4,6 +4,16 @@ Two things are released from this repository, each on its own version line: the 
 command line tool (npm package `webstorm-commands`, tags `v*`) and the wsc Companion IDE
 plugin (tags `plugin-v*`). Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [plugin 0.6.0] - 2026-MM-DD
+
+### Added
+- `list_running` — the run configurations with a live process, and the Terminal tabs wsc opened with whether a command is running in them. What `wsc --stop` and `wsc --restart` ask.
+- `stop_run_configuration` / `restart_run_configuration` — Stop and Rerun for a running configuration; the restart stays in the same Run or Debug tab, and a restarted debug session has its breakpoints muted.
+- `stop_terminal_tab` / `restart_terminal_tab` — Ctrl-C in wsc's Terminal tab for an entry, and for a restart the command typed again in the same tab once the old one has stopped (5 s, otherwise an error and nothing typed).
+
+### Changed
+- `open_terminal_tab` takes an optional `kind`, `mode` and `debugPort`, and marks the tab with them, in memory only. Unmarked tabs — opened by an older wsc, by hand, or before an IDE restart — are invisible to the tools above.
+
 ## [cli 0.1.0] - 2026-MM-DD
 
 First public release.

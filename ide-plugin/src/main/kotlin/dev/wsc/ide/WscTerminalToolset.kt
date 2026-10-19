@@ -6,9 +6,13 @@ import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
 import com.intellij.mcpserver.project
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.project.Project
+import com.intellij.terminal.ui.TerminalWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
@@ -69,5 +73,76 @@ class WscTerminalToolset : McpToolset {
         return "opened terminal tab \"$tabName\""
     }
 
+    @McpTool(name = "stop_terminal_tab")
+    @McpDescription(
+        """
+        |Stop the command running in the Terminal tabs `open_terminal_tab` marked with this kind and entry name, by
+        |pressing Ctrl-C in them; the tabs stay open. Fails if the command is still running 5 seconds later.
+        |An entry with no command running is not an error: there is nothing left to stop.
+        """,
+    )
+    suspend fun stop_terminal_tab(
+        @McpDescription("Kind of preset entry: config or custom") kind: String,
+        @McpDescription("Name of the preset entry the tab was opened for") entryName: String,
+    ): String {
+        val stopped = interrupt(currentCoroutineContext().project, kind, entryName)
+        return if (stopped.isEmpty()) "\"$entryName\" is not running" else "stopped \"$entryName\""
+    }
+
+    @McpTool(name = "restart_terminal_tab")
+    @McpDescription(
+        """
+        |Restart the command running in the Terminal tabs `open_terminal_tab` marked with this kind and entry name: press
+        |Ctrl-C, wait for it to stop, then type `command` into the same tab. If it does not stop within 5 seconds,
+        |nothing is typed — that would start a second copy beside the first.
+        """,
+    )
+    suspend fun restart_terminal_tab(
+        @McpDescription("Kind of preset entry: config or custom") kind: String,
+        @McpDescription("Name of the preset entry the tab was opened for") entryName: String,
+        @McpDescription("Shell command line to execute in the tab once the old one has stopped") command: String,
+    ): String {
+        val stopped = interrupt(currentCoroutineContext().project, kind, entryName)
+        if (stopped.isEmpty()) throw fail("\"$entryName\" is not running in a Terminal tab, so there is nothing to restart")
+        withContext(Dispatchers.EDT) { stopped.forEach { it.sendCommandToExecute(command) } }
+        return "restarted \"$entryName\""
+    }
+
+    /**
+     * Ctrl-C into every marked tab of this entry that has a command running, then wait until none
+     * does. Returns the tabs that were stopped (empty when nothing was running).
+     */
+    private suspend fun interrupt(project: Project, kind: String, entryName: String): List<TerminalWidget> {
+        if (kind !in TabMarks.KINDS) throw fail("kind must be one of ${TabMarks.KINDS}, got $kind")
+
+        // The widgets are UI state, read and written on the EDT like everywhere else here.
+        val running = withContext(Dispatchers.EDT) {
+            TerminalToolWindowManager.getInstance(project).terminalWidgets
+                .filter { widget -> TabMarks.get(widget)?.let { it.kind == kind && it.entryName == entryName } == true }
+                .filter { it.isCommandRunning() }
+                .onEach { widget ->
+                    val tty = widget.ttyConnector ?: throw fail("the Terminal tab of \"$entryName\" has no terminal connected")
+                    tty.write(CTRL_C)
+                }
+        }
+        if (running.isEmpty()) return running
+
+        withTimeoutOrNull(STOP_TIMEOUT_MS) {
+            while (withContext(Dispatchers.EDT) { running.any { it.isCommandRunning() } }) delay(POLL_MS)
+        } ?: throw fail(
+            "\"$entryName\" did not stop on Ctrl-C within ${STOP_TIMEOUT_MS / 1000}s — it is still running in its Terminal tab",
+        )
+        return running
+    }
+
     private fun fail(text: String) = McpExpectedError(text, JsonObject(emptyMap()))
+
+    private companion object {
+        const val CTRL_C = "\u0003"
+
+        /** How long a command gets to exit after Ctrl-C before it counts as not stopping. */
+        const val STOP_TIMEOUT_MS = 5_000L
+
+        const val POLL_MS = 100L
+    }
 }
