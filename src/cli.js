@@ -15,6 +15,7 @@ import {
     splitPresetNames,
 } from './args.js';
 import { completionScript } from './completion/scripts.js';
+import { runControl } from './control/run.js';
 import { COMPLETION_SHELLS, isCompletionShell } from './completion/shells.js';
 import {
     DEBUG_PORT_BASE,
@@ -372,6 +373,10 @@ const KNOWN_ERRORS = new Set([
     'RunConfigPayloadError',
     // win32 with a plan that types POSIX shell into the IDE terminal (src/exec/terminalShell.js).
     'PosixTerminalRequiredError',
+    // --stop / --restart: no plugin to ask, or a command line they cannot act on (src/control/).
+    'ControlError',
+    // A list_running answer wsc cannot read — a plugin and a CLI from different releases.
+    'RunningPayloadError',
     // The SDK's own class ("MCP error -32000: Connection closed", "-32001: Request timed
     // out"). Before phase 6 the only call was get_run_configurations and this was close to
     // unreachable; a launch makes it routine, and runExecutionPlan deliberately rethrows it.
@@ -596,6 +601,55 @@ async function runDeletePreset({ projectRoot, config, name, log }) {
 }
 
 /**
+ * `--stop` / `--restart`: act on what runs from the presets, and stop.
+ *
+ * Without --preset that is every preset, not the default one: "stop what is running" should not
+ * depend on which preset a bare `wsc` would launch. There is no without-IDE branch — what runs in
+ * the IDE can only be stopped through it — so the prompt offers retrying or giving up.
+ *
+ * @param {object} ctx
+ * @param {'stop' | 'restart'} ctx.action
+ * @param {string} ctx.projectRoot
+ * @param {import('./presets/store.js').PresetConfig} ctx.config
+ * @param {import('./args.js').CliValues} ctx.values
+ * @param {string[]} ctx.typed - the raw positionals
+ * @param {import('./args.js').PresetUse[]} ctx.presetUses
+ * @param {import('./ui/mcpUnavailablePrompt.js').FallbackMode | undefined} ctx.fallback
+ * @param {number} ctx.debugPortBase
+ * @param {RunDeps} ctx.deps
+ * @returns {Promise<number>} exit code
+ */
+async function runControlCommand({ action, projectRoot, config, values, typed, presetUses, fallback, debugPortBase, deps }) {
+    const { log, env } = deps;
+    const split = splitPresetNames(typed, presetUses, (name) => hasPreset(config, name));
+    const presetNames = values.preset !== undefined ? split.presets : null;
+    const missing = presetNames?.find((name) => !hasPreset(config, name));
+    if (missing !== undefined) throw new WscError(`unknown preset "${missing}" (${unknownPresetHint(config)})`);
+
+    const reached = await reachMcp(deps, values, fallback, { terminalAvailable: false });
+    if (reached.kind === 'exit') return reached.code;
+    if (reached.kind === 'without-ide') throw new WscError(`--${action} needs the IDE, and it is not answering`);
+
+    return await withMcpSession(deps, reached.port, projectRoot, async (client) =>
+        runControl({
+            action,
+            client,
+            tools: await ideToolNames(client, log),
+            config,
+            presetNames,
+            tokens: split.positionals,
+            projectRoot,
+            dryRun: Boolean(values['dry-run']),
+            debugPortBase,
+            platform: deps.platform ?? process.platform,
+            env,
+            log,
+            readIdeaRunConfigs: deps.readIdeaRunConfigs ?? readIdeaRunConfigs,
+            launch: (plan, calls) => (deps.executePlan ?? executePlan)(plan, { client, log, calls }),
+        }));
+}
+
+/**
  * @param {string[]} argv
  * @param {RunDeps} deps
  * @returns {Promise<number>}
@@ -754,7 +808,9 @@ async function run(argv, deps) {
     if (deleting) {
         return await runDeletePreset({ projectRoot, config, name: values['delete-preset'] ?? '', log });
     }
-    if (control !== null) throw new WscError('not implemented');
+    if (control !== null) {
+        return await runControlCommand({ action: control, projectRoot, config, values, typed, presetUses, fallback, debugPortBase, deps });
+    }
     // `--preset a b` and `--preset a --preset b` name several presets, launched together as
     // if they were one: entries in the order given, and a configuration in more than one
     // keeps its first position with the last mode — the rule buildLaunchPlan() already has

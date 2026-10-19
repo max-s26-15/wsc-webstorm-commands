@@ -1834,8 +1834,16 @@ describe('runCli — --stop and --restart: the command line', () => {
     }
 
     test('--restart takes --debug-port: a new setup may launch an entry in debug', async () => {
-        const result = await control(['--restart', '--debug-port', '9300', '--dry-run']);
-        assert.notEqual(result.code, 2, result.stderr);
+        const { dir, cleanup } = await tmpProject(CONFIG);
+        try {
+            // An IDE that is not there: the run gets past the command line and stops at the IDE.
+            const h = fakeCliDeps({ cwd: dir, port: null });
+            const code = await runCli(['--restart', '--debug-port', '9300', '--dry-run'], h.deps);
+            assert.equal(code, 1, h.stderr());
+            assert.doesNotMatch(h.stderr(), /--debug-port/);
+        } finally {
+            await cleanup();
+        }
     });
 
     test('--help names both', async () => {
