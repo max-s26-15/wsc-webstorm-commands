@@ -271,14 +271,23 @@ exercises it.
   `@inquirer/prompts` checkbox takes no key of ours, so the list is `src/ui/editableCheckbox.js`, drawn on
   `@inquirer/core` (a direct dependency now, with `@inquirer/figures`, both the versions `@inquirer/prompts`
   already pulled in) to look like the stock one; every key's decision is the pure `pressKey()` in
-  `src/ui/checkboxKeys.js`. `e`/`n` *settle* the prompt with `{action, value, checked, active}`, and
+  `src/ui/checkboxKeys.js` — navigation through `@inquirer/core`'s `isUpKey`/`isDownKey` with the theme's
+  `keybindings`, checked *before* the letters, so `INQUIRER_KEYBINDINGS=emacs` Ctrl-N is "down" and not
+  `n`. `e`/`n` *settle* the prompt with `{action, value, checked, active}`, and
   `runConfigure()` runs the menu and draws the list again from that state — one list, not a nested prompt.
   For that to look like one list changing in place, leaving erases it: `@inquirer/core` reads
   `context.clearPromptOnDone` only once the prompt has settled, so `editableCheckbox()` owns the context
   and the view flips it on `e`/`n`, never on Enter (which leaves the usual `✔` line); every menu and input
-  opened from the list is passed `IN_PLACE` for the same reason. The list's state is `Screen` in
-  `configure.js` (`checked`, `edits`, `added`, `deleted`), turned into rows by `screenChoices()` and back
-  into a selection by `splitSelection()`. An entry added on this screen is keyed `newChoiceValue(index)` —
+  opened from the list is passed `IN_PLACE` for the same reason. **Every one of those prompts takes an
+  empty answer as "back, nothing changed"** (an empty name or first command adds nothing; an empty rename
+  or change keeps the old value): otherwise the only way out of a mis-picked menu item is Ctrl-C, which
+  discards the whole screen. The list's state is `Screen` (`checked`, `edits`, `added`, `deleted`) and
+  every transition of it is a pure function in `configureLogic.js` returning a new one —
+  `addCustomEntry()`, `customDraft()`, `applyEntryEdit()`, `takenNames()` — so `configure.js` only threads
+  it through the prompts. Rows come from `screenChoices()`, the saved selection from `splitSelection()`;
+  a deletion is recorded in `deleted` alone (a row that is not drawn cannot be submitted checked).
+  `customDraft()` also returns `keep`, the entry's own names, which `validateCustomName()` accepts even
+  when a run configuration has them — a hand-edited file can hold a custom entry called `web`. An entry added on this screen is keyed `newChoiceValue(index)` (read back with `newChoiceIndex()`) —
   never its name, which `e` can change — and is taken out of the selection before anything reads it as a
   configuration name (it would otherwise be asked a mode question). Edits of a *saved* entry are a
   `CustomEdits` `Map` keyed by its name *as the screen opened*, because a rename changes the name and not

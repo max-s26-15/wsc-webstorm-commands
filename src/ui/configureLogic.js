@@ -52,6 +52,16 @@ export function newChoiceValue(index) {
 export const isNewChoiceValue = (value) => value.startsWith(NEW_PREFIX);
 
 /**
+ * The index newChoiceValue() was given, or -1 for any other value.
+ *
+ * @param {string} value
+ * @returns {number}
+ */
+export function newChoiceIndex(value) {
+    return isNewChoiceValue(value) ? Number(value.slice(NEW_PREFIX.length)) : -1;
+}
+
+/**
  * Identity of an entry across two versions of a preset. Kind first, so a custom entry and a
  * configuration of one name are not the same entry.
  *
@@ -76,6 +86,15 @@ const customLabel = (entry) => `⌘ ${entry.name} — ${customCommandLine(entry.
  * when the screen opened — a rename changes its name, not which entry it is.
  * @typedef {{ name: string, commands: string[] }} CustomEdit
  * @typedef {Map<string, CustomEdit>} CustomEdits
+ *
+ * Everything the `--configure` list has been through since the screen opened. Each
+ * transition below returns a new one; none mutates the one it is given.
+ * @typedef {{
+ *   checked: Set<string>,
+ *   edits: CustomEdits,
+ *   added: PresetEntry[],
+ *   deleted: Set<string>,
+ * }} Screen
  */
 
 /**
@@ -231,14 +250,19 @@ export function diffPreset(before, after, edits = new Map()) {
  * or renamed since (customNamesInUse()) — including one just unchecked: re-adding it in the
  * same run would be an edit in disguise, which the edit step does in place instead.
  *
+ * `keep` are names the entry being renamed may always have — its own: a hand-edited file can
+ * hold a custom entry called like a run configuration, and refusing that name would leave
+ * "Name" with no answer that is accepted.
+ *
  * @param {string} rawName - trimmed here; the caller may pass the line as typed
- * @param {{ taken?: string[], ideNames?: string[] }} [opts]
+ * @param {{ taken?: string[], ideNames?: string[], keep?: string[] }} [opts]
  * @returns {string | null}
  */
-export function validateCustomName(rawName, { taken = [], ideNames = [] } = {}) {
+export function validateCustomName(rawName, { taken = [], ideNames = [], keep = [] } = {}) {
     const name = rawName.trim();
     if (name === '') return 'a name is required';
     if (CONTROL_CHARACTERS.test(name)) return 'a name cannot contain control characters';
+    if (keep.includes(name)) return null;
     if (taken.includes(name)) return `"${name}" is already a custom command in this preset`;
     if (ideNames.includes(name)) return `"${name}" is the name of a run configuration; pick a different name`;
     return null;
@@ -362,11 +386,8 @@ export function commandEditChoices(commands, index) {
  * deletions applied. Only custom entries, saved or new, are editable.
  *
  * @param {Choice[]} base - from buildInitialSelection()
- * @param {object} screen
- * @param {Set<string>} screen.checked - values checked right now
- * @param {CustomEdits} screen.edits - keyed by the name a saved entry had when the screen opened
- * @param {PresetEntry[]} screen.added - new entries, in the order added; never spliced
- * @param {Set<string>} screen.deleted - values removed with "Delete"
+ * @param {Screen} screen - `edits` keyed by the name a saved entry had when the screen opened;
+ *   `added` in the order added, never spliced; `deleted` the values removed with "Delete"
  * @returns {import('./checkboxKeys.js').Item[]}
  */
 export function screenChoices(base, { checked, edits, added, deleted }) {
@@ -403,6 +424,98 @@ export function splitSelection(items, added) {
     const checked = items.filter((item) => item.checked).map((item) => item.value);
     return {
         selection: checked.filter((value) => !isNewChoiceValue(value)),
-        added: checked.filter(isNewChoiceValue).map((value) => added[Number(value.slice(NEW_PREFIX.length))]),
+        added: checked.filter(isNewChoiceValue).map((value) => added[newChoiceIndex(value)]),
     };
+}
+
+/**
+ * The preset entry behind a saved custom entry's list value.
+ *
+ * @param {PresetEntry[]} preset
+ * @param {string} value
+ */
+function savedEntry(preset, value) {
+    return preset.filter(isCustomEntry).find((entry) => customChoiceValue(entry.name) === value);
+}
+
+/**
+ * `n`: add a custom entry to the list, checked.
+ *
+ * @param {Screen} screen
+ * @param {PresetEntry} entry
+ * @returns {{ screen: Screen, value: string }} `value` is its list value, for the cursor
+ */
+export function addCustomEntry(screen, entry) {
+    const value = newChoiceValue(screen.added.length);
+    return {
+        screen: { ...screen, added: [...screen.added, entry], checked: new Set([...screen.checked, value]) },
+        value,
+    };
+}
+
+/**
+ * `e`: what the entry's menu opens with, and the names it may keep whatever else has them.
+ *
+ * A saved entry starts from its edit on this screen if it has one, and may keep both the name
+ * in the file and its current one; an entry added on this screen only has the current one.
+ *
+ * @param {PresetEntry[]} preset - as it was when the screen opened
+ * @param {Screen} screen
+ * @param {string} value - the entry's list value
+ * @returns {{ draft: CustomEdit, keep: string[] }}
+ */
+export function customDraft(preset, screen, value) {
+    const index = newChoiceIndex(value);
+    if (index !== -1) {
+        const entry = screen.added[index];
+        return { draft: { name: entry.name, commands: entry.commands ?? [] }, keep: [entry.name] };
+    }
+    const saved = savedEntry(preset, value);
+    const name = saved?.name ?? '';
+    const draft = screen.edits.get(name) ?? { name, commands: saved?.commands ?? [] };
+    return { draft, keep: [name, draft.name] };
+}
+
+/**
+ * What the entry's menu ended with: an edit, or `null` for "Delete".
+ *
+ * Deleting takes the row off the list; `deleted` is the only record of it, since a row that
+ * is not drawn cannot be submitted checked.
+ *
+ * @param {PresetEntry[]} preset
+ * @param {Screen} screen
+ * @param {string} value
+ * @param {CustomEdit | null} result
+ * @returns {Screen}
+ */
+export function applyEntryEdit(preset, screen, value, result) {
+    if (result === null) return { ...screen, deleted: new Set([...screen.deleted, value]) };
+
+    const index = newChoiceIndex(value);
+    if (index !== -1) {
+        const added = [...screen.added];
+        added[index] = { ...added[index], ...result };
+        return { ...screen, added };
+    }
+    const saved = savedEntry(preset, value);
+    return saved ? { ...screen, edits: new Map([...screen.edits, [saved.name, result]]) } : screen;
+}
+
+/**
+ * Custom names the entry with list value `except` cannot take, or a new entry if omitted.
+ *
+ * The preset's own names stay taken even once unchecked or deleted (see validateCustomName());
+ * an entry added on this screen and deleted again was never saved, so its name is free.
+ *
+ * @param {PresetEntry[]} preset
+ * @param {Screen} screen
+ * @param {string} [except]
+ * @returns {string[]}
+ */
+export function takenNames(preset, screen, except) {
+    const original = except === undefined ? undefined : savedEntry(preset, except)?.name;
+    const fresh = screen.added
+        .filter((_, index) => newChoiceValue(index) !== except && !screen.deleted.has(newChoiceValue(index)))
+        .map((entry) => entry.name);
+    return [...customNamesInUse(preset, screen.edits, original), ...fresh];
 }

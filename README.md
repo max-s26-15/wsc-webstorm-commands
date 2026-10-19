@@ -401,10 +401,15 @@ Custom commands are managed in the `wsc -c` list itself. A custom entry shows th
 `⌘ seed db — npm i && npm run seed`, after the run configurations, and two keys work beside the usual
 ones:
 
-- `n` adds one: a name (empty goes back to the list), then the commands one at a time (an empty line
-  ends the list; the first one is required). It comes back checked, under the cursor.
+- `n` adds one: a name, then the commands one at a time (an empty line ends the list). It comes back
+  checked, under the cursor.
 - `e`, with the cursor on a custom entry, opens its menu: rename it, change, move or delete one of its
   commands, add a command at the end, or delete the whole entry.
+
+An empty answer to any of those questions goes back without changing anything — an empty name or
+first command adds nothing, an empty new command adds nothing, an empty rename or change keeps what
+was there. `INQUIRER_KEYBINDINGS=vim` (`j`/`k`) and `=emacs` (`Ctrl-N`/`Ctrl-P`) move through the list
+as they do in every other `@inquirer` prompt.
 
 Unchecking a custom entry removes it too. A name cannot be the name of a run configuration, or of
 another custom command in the same preset. An edited entry keeps its place in the preset, and nothing

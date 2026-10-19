@@ -1,28 +1,29 @@
 /**
  * The `--configure` screen: pick what launches by default, and in which mode.
  *
- * Deliberately thin. Everything worth testing lives in configureLogic.js (and the list's
- * keys in checkboxKeys.js); this file only drives the prompts and talks to the store, and is
- * verified by hand against the plan's phase-5 checklist.
+ * Deliberately thin. Every decision lives in configureLogic.js (the list's state included)
+ * and checkboxKeys.js (the list's keys); this file only drives the prompts, threads the
+ * state through them and talks to the store, and is verified by hand against the plan's
+ * phase-5 checklist.
  */
 import { input, select } from '@inquirer/prompts';
 
 import { DEFAULT_MODE, MODES } from '../modes.js';
-import { hasPreset, isCustomEntry, setPreset, writePresets } from '../presets/store.js';
+import { hasPreset, setPreset, writePresets } from '../presets/store.js';
 import {
+    addCustomEntry,
     applyAnswersToPreset,
+    applyEntryEdit,
     buildInitialSelection,
     commandEditChoices,
-    customChoiceValue,
-    customNamesInUse,
+    customDraft,
     diffPreset,
     editCommands,
     entryEditChoices,
-    isNewChoiceValue,
-    newChoiceValue,
     pendingModeQuestions,
     screenChoices,
     splitSelection,
+    takenNames,
     validateCustomCommand,
     validateCustomName,
 } from './configureLogic.js';
@@ -38,6 +39,9 @@ const PAGE_SIZE = 20;
 /**
  * Passed to every prompt opened from the list with `e` or `n`: each one erases itself when
  * answered, so the list is drawn again where it was instead of below a trail of menus.
+ *
+ * Each of those prompts also takes an empty answer as "back, nothing changed" — Ctrl-C is
+ * the only other way out, and it throws away everything done on the screen.
  */
 const IN_PLACE = { clearPromptOnDone: true };
 
@@ -53,14 +57,7 @@ const IN_PLACE = { clearPromptOnDone: true };
  *   select: (config: any, context?: object) => Promise<any>,
  *   input: (config: any, context?: object) => Promise<string>,
  * }} Prompts
- *
- * Everything the list has been through since the screen opened.
- * @typedef {{
- *   checked: Set<string>,
- *   edits: import('./configureLogic.js').CustomEdits,
- *   added: PresetEntry[],
- *   deleted: Set<string>,
- * }} Screen
+ * @typedef {import('./configureLogic.js').Screen} Screen
  */
 
 /**
@@ -112,7 +109,7 @@ export async function runConfigure(opts) {
 
     const ideNames = configs.map((config) => config.name);
     /** @type {Screen} */
-    const screen = {
+    let screen = {
         checked: new Set(choices.filter((choice) => choice.checked).map((choice) => choice.value)),
         edits: new Map(),
         added: [],
@@ -141,10 +138,11 @@ export async function runConfigure(opts) {
             active = result.active;
             if (result.action === 'submit') break;
 
-            // Where the cursor goes when the list comes back: onto the entry just touched.
-            const focus = result.action === 'new'
+            // `focus` is where the cursor goes when the list comes back: the entry just touched.
+            const { screen: next, focus } = result.action === 'new'
                 ? await addFromList({ prompts, before, screen, ideNames })
                 : await editFromList({ prompts, before, screen, ideNames, value: /** @type {string} */ (result.value) });
+            screen = next;
             const items = screenChoices(choices, screen);
             const at = items.findIndex((item) => item.value === focus);
             active = at === -1 ? Math.min(active, Math.max(items.length - 1, 0)) : at;
@@ -187,39 +185,11 @@ export async function runConfigure(opts) {
 }
 
 /**
- * Custom names the entry with list value `except` cannot take, or a new entry if omitted.
- *
- * The preset's own names stay taken even once unchecked or deleted (see validateCustomName());
- * an entry added on this screen and deleted again was never saved, so its name is free.
- *
- * @param {PresetEntry[]} before
- * @param {Screen} screen
- * @param {string} [except]
- * @returns {string[]}
- */
-function takenNames(before, screen, except) {
-    const original = except === undefined ? undefined : savedEntry(before, except)?.name;
-    const fresh = screen.added
-        .filter((_, index) => newChoiceValue(index) !== except && !screen.deleted.has(newChoiceValue(index)))
-        .map((entry) => entry.name);
-    return [...customNamesInUse(before, screen.edits, original), ...fresh];
-}
-
-/**
- * The preset entry behind a saved custom entry's list value.
- *
- * @param {PresetEntry[]} before
- * @param {string} value
- */
-function savedEntry(before, value) {
-    return before.filter(isCustomEntry).find((entry) => customChoiceValue(entry.name) === value);
-}
-
-/**
- * `n` in the list: ask for a name and commands, and add the entry checked.
+ * `n` in the list: ask for a name and commands, and add the entry checked. An empty name,
+ * or an empty first command, goes back to the list with nothing added.
  *
  * @param {{ prompts: Prompts, before: PresetEntry[], screen: Screen, ideNames: string[] }} opts
- * @returns {Promise<string | undefined>} the new entry's list value; nothing when backed out of
+ * @returns {Promise<{ screen: Screen, focus?: string }>}
  */
 async function addFromList({ prompts, before, screen, ideNames }) {
     const taken = takenNames(before, screen);
@@ -227,14 +197,13 @@ async function addFromList({ prompts, before, screen, ideNames }) {
         await prompts.input(
             {
                 message: 'Name (it titles the terminal tab; empty to go back)',
-                // Empty is the way back to the list, so it is the one name not refused here.
                 validate: (/** @type {string} */ value) =>
                     value.trim() === '' || (validateCustomName(value, { taken, ideNames }) ?? true),
             },
             IN_PLACE,
         )
     ).trim();
-    if (name === '') return undefined;
+    if (name === '') return { screen };
 
     /** @type {string[]} */
     const commands = [];
@@ -242,11 +211,8 @@ async function addFromList({ prompts, before, screen, ideNames }) {
         const line = (
             await prompts.input(
                 {
-                    message: commands.length === 0 ? 'Command' : `Command ${commands.length + 1} (empty to finish)`,
-                    validate: (/** @type {string} */ value) => {
-                        if (value.trim() !== '') return validateCustomCommand(value) ?? true;
-                        return commands.length === 0 ? 'the first command is required' : true;
-                    },
+                    message: commands.length === 0 ? 'Command (empty to go back)' : `Command ${commands.length + 1} (empty to finish)`,
+                    validate: (/** @type {string} */ value) => value.trim() === '' || (validateCustomCommand(value) ?? true),
                 },
                 IN_PLACE,
             )
@@ -254,11 +220,10 @@ async function addFromList({ prompts, before, screen, ideNames }) {
         if (line === '') break;
         commands.push(line);
     }
+    if (commands.length === 0) return { screen };
 
-    screen.added.push({ name, mode: 'terminal', commands });
-    const value = newChoiceValue(screen.added.length - 1);
-    screen.checked.add(value);
-    return value;
+    const added = addCustomEntry(screen, { name, mode: 'terminal', commands });
+    return { screen: added.screen, focus: added.value };
 }
 
 /**
@@ -268,27 +233,12 @@ async function addFromList({ prompts, before, screen, ideNames }) {
  * anywhere still leaves the file as it was.
  *
  * @param {{ prompts: Prompts, before: PresetEntry[], screen: Screen, ideNames: string[], value: string }} opts
- * @returns {Promise<string>} the list value, to put the cursor back on
+ * @returns {Promise<{ screen: Screen, focus: string }>}
  */
 async function editFromList({ prompts, before, screen, ideNames, value }) {
-    const index = isNewChoiceValue(value) ? screen.added.findIndex((_, i) => newChoiceValue(i) === value) : -1;
-    const saved = savedEntry(before, value);
-    const draft = index !== -1
-        ? { name: screen.added[index].name, commands: screen.added[index].commands ?? [] }
-        : screen.edits.get(saved?.name ?? '') ?? { name: saved?.name ?? '', commands: saved?.commands ?? [] };
-
-    const result = await editCustomEntry({ prompts, draft, taken: takenNames(before, screen, value), ideNames });
-
-    if (result === null) {
-        // Deleting takes it off the list; unchecked, the save drops it.
-        screen.deleted.add(value);
-        screen.checked.delete(value);
-    } else if (index !== -1) {
-        screen.added[index] = { ...screen.added[index], ...result };
-    } else if (saved) {
-        screen.edits.set(saved.name, result);
-    }
-    return value;
+    const { draft, keep } = customDraft(before, screen, value);
+    const result = await editCustomEntry({ prompts, draft, taken: takenNames(before, screen, value), keep, ideNames });
+    return { screen: applyEntryEdit(before, screen, value, result), focus: value };
 }
 
 /**
@@ -298,10 +248,11 @@ async function editFromList({ prompts, before, screen, ideNames, value }) {
  * @param {Prompts} opts.prompts
  * @param {import('./configureLogic.js').CustomEdit} opts.draft
  * @param {string[]} opts.taken - custom names this entry cannot be renamed to
+ * @param {string[]} opts.keep - names it may keep whatever else has them (its own)
  * @param {string[]} opts.ideNames
  * @returns {Promise<import('./configureLogic.js').CustomEdit | null>} `null` when deleted
  */
-async function editCustomEntry({ prompts, draft, taken, ideNames }) {
+async function editCustomEntry({ prompts, draft, taken, keep, ideNames }) {
     let { name, commands } = draft;
 
     for (;;) {
@@ -319,19 +270,22 @@ async function editCustomEntry({ prompts, draft, taken, ideNames }) {
         if (action === 'delete') return null;
 
         if (action === 'name') {
-            name = (
+            const typed = (
                 await prompts.input(
                     {
-                        message: 'Name (it titles the terminal tab)',
+                        message: 'Name (it titles the terminal tab; empty to keep it)',
                         default: name,
                         prefill: 'editable',
-                        validate: (/** @type {string} */ value) => validateCustomName(value, { taken, ideNames }) ?? true,
+                        validate: (/** @type {string} */ value) =>
+                            value.trim() === '' || (validateCustomName(value, { taken, ideNames, keep }) ?? true),
                     },
                     IN_PLACE,
                 )
             ).trim();
+            if (typed !== '') name = typed;
         } else if (action === 'append') {
-            commands = editCommands(commands, { type: 'append', line: await askCommandLine(prompts, 'New command') });
+            const line = await askCommandLine(prompts, 'New command (empty to go back)');
+            if (line !== '') commands = editCommands(commands, { type: 'append', line });
         } else {
             const index = /** @type {number} */ (action);
             const op = await prompts.select(
@@ -343,8 +297,8 @@ async function editCustomEntry({ prompts, draft, taken, ideNames }) {
                 IN_PLACE,
             );
             if (op === 'replace') {
-                const line = await askCommandLine(prompts, `Command ${index + 1}`, commands[index]);
-                commands = editCommands(commands, { type: 'replace', index, line });
+                const line = await askCommandLine(prompts, `Command ${index + 1} (empty to keep it)`, commands[index]);
+                if (line !== '') commands = editCommands(commands, { type: 'replace', index, line });
             } else if (op !== 'back') {
                 commands = editCommands(commands, { type: op, index });
             }
@@ -358,14 +312,14 @@ async function editCustomEntry({ prompts, draft, taken, ideNames }) {
  * @param {Prompts} prompts
  * @param {string} message
  * @param {string} [current] - pre-filled, so a long line is edited rather than retyped
- * @returns {Promise<string>}
+ * @returns {Promise<string>} trimmed; empty means "back", and the caller changes nothing
  */
 async function askCommandLine(prompts, message, current) {
     const line = await prompts.input(
         {
             message,
             ...(current === undefined ? {} : { default: current, prefill: 'editable' }),
-            validate: (/** @type {string} */ value) => validateCustomCommand(value) ?? true,
+            validate: (/** @type {string} */ value) => value.trim() === '' || (validateCustomCommand(value) ?? true),
         },
         IN_PLACE,
     );

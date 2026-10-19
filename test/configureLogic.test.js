@@ -12,11 +12,16 @@ import {
     customNamesInUse,
     diffPreset,
     editCommands,
+    addCustomEntry,
+    applyEntryEdit,
+    customDraft,
     entryEditChoices,
+    newChoiceIndex,
     newChoiceValue,
     pendingModeQuestions,
     screenChoices,
     splitSelection,
+    takenNames,
     validateCustomCommand,
     validateCustomName,
 } from '../src/ui/configureLogic.js';
@@ -359,6 +364,13 @@ describe('validateCustomName', () => {
         assert.equal(validateCustomName('constructor', opts), null);
         assert.equal(validateCustomName('__proto__', opts), null);
     });
+
+    test('a name the entry may keep is accepted even if a run configuration has it too', () => {
+        // A hand-edited file can hold a custom entry called like a configuration.
+        assert.equal(validateCustomName('web', { ...opts, keep: ['web'] }), null);
+        assert.equal(validateCustomName(' web ', { ...opts, keep: ['web'] }), null);
+        assert.equal(validateCustomName('', { ...opts, keep: [''] }), 'a name is required');
+    });
 });
 
 describe('validateCustomCommand', () => {
@@ -605,5 +617,94 @@ describe('splitSelection — what the list hands to the save', () => {
     test('the selection never asks a mode question about a new entry', () => {
         const { selection } = splitSelection([item(newChoiceValue(0), true), item('web', true)], added);
         assert.deepEqual(pendingModeQuestions(selection, []), ['web']);
+    });
+});
+
+describe('the list\'s screen state — pure transitions', () => {
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'], note: 'keep me' };
+    const other = { name: 'other', mode: 'terminal', commands: ['x'] };
+    const preset = [{ name: 'web', mode: 'run' }, seed, other];
+    const SEED = customChoiceValue('seed db');
+    const fresh = () => ({ checked: new Set(['web', SEED]), edits: new Map(), added: [], deleted: new Set() });
+
+    test('newChoiceIndex reads back newChoiceValue, and is -1 for anything else', () => {
+        assert.equal(newChoiceIndex(newChoiceValue(0)), 0);
+        assert.equal(newChoiceIndex(newChoiceValue(12)), 12);
+        assert.equal(newChoiceIndex(SEED), -1);
+        assert.equal(newChoiceIndex('web'), -1);
+    });
+
+    test('addCustomEntry appends the entry checked and names its list value; the old screen is untouched', () => {
+        const screen = fresh();
+        const entry = { name: 'lint', mode: 'terminal', commands: ['npm run lint'] };
+        const { screen: next, value } = addCustomEntry(screen, entry);
+
+        assert.equal(value, newChoiceValue(0));
+        assert.deepEqual(next.added, [entry]);
+        assert.ok(next.checked.has(value));
+        assert.deepEqual(screen.added, []);
+        assert.ok(!screen.checked.has(value));
+    });
+
+    test('customDraft of a saved entry: its commands, and the names it may keep', () => {
+        assert.deepEqual(customDraft(preset, fresh(), SEED), {
+            draft: { name: 'seed db', commands: ['npm i', 'npm run seed'] },
+            keep: ['seed db', 'seed db'],
+        });
+    });
+
+    test('customDraft of an edited saved entry starts from the edit, and may still go back to its old name', () => {
+        const screen = { ...fresh(), edits: new Map([['seed db', { name: 'seed', commands: ['npm ci'] }]]) };
+        assert.deepEqual(customDraft(preset, screen, SEED), {
+            draft: { name: 'seed', commands: ['npm ci'] },
+            keep: ['seed db', 'seed'],
+        });
+    });
+
+    test('customDraft of an entry added on this screen', () => {
+        const { screen } = addCustomEntry(fresh(), { name: 'lint', mode: 'terminal', commands: ['a'] });
+        assert.deepEqual(customDraft(preset, screen, newChoiceValue(0)), {
+            draft: { name: 'lint', commands: ['a'] },
+            keep: ['lint'],
+        });
+    });
+
+    test('applyEntryEdit records a saved entry\'s edit under the name it opened with', () => {
+        const next = applyEntryEdit(preset, fresh(), SEED, { name: 'seed', commands: ['npm ci'] });
+        assert.deepEqual([...next.edits], [['seed db', { name: 'seed', commands: ['npm ci'] }]]);
+    });
+
+    test('applyEntryEdit replaces an added entry in place, keeping what the edit does not cover', () => {
+        const { screen } = addCustomEntry(fresh(), { name: 'lint', mode: 'terminal', commands: ['a'] });
+        const next = applyEntryEdit(preset, screen, newChoiceValue(0), { name: 'lint:fix', commands: ['b'] });
+        assert.deepEqual(next.added, [{ name: 'lint:fix', mode: 'terminal', commands: ['b'] }]);
+        assert.deepEqual(screen.added[0].name, 'lint');
+    });
+
+    test('applyEntryEdit with null deletes: the row is gone, and that is the only record of it', () => {
+        const next = applyEntryEdit(preset, fresh(), SEED, null);
+        assert.deepEqual([...next.deleted], [SEED]);
+        assert.deepEqual(splitSelection(screenChoices(buildInitialSelection([{ name: 'web' }], preset).choices, next), next.added).selection, ['web']);
+    });
+
+    test('takenNames for a new entry: every saved custom name, every name given on this screen', () => {
+        let screen = applyEntryEdit(preset, fresh(), SEED, { name: 'seed', commands: ['x'] });
+        ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
+        assert.deepEqual(takenNames(preset, screen).sort(), ['lint', 'other', 'seed', 'seed db']);
+    });
+
+    test('takenNames leaves out the entry asked about, saved or new', () => {
+        let screen = fresh();
+        ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
+        assert.deepEqual(takenNames(preset, screen, SEED).sort(), ['lint', 'other']);
+        assert.deepEqual(takenNames(preset, screen, newChoiceValue(0)).sort(), ['other', 'seed db']);
+    });
+
+    test('a new entry deleted again frees its name; a deleted saved entry does not', () => {
+        let screen = fresh();
+        ({ screen } = addCustomEntry(screen, { name: 'lint', mode: 'terminal', commands: ['x'] }));
+        screen = applyEntryEdit(preset, screen, newChoiceValue(0), null);
+        screen = applyEntryEdit(preset, screen, SEED, null);
+        assert.deepEqual(takenNames(preset, screen).sort(), ['other', 'seed db']);
     });
 });

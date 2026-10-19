@@ -9,6 +9,8 @@
  * list for a moment: `e` edits the custom command under the cursor, `n` adds a new one.
  */
 
+import { isDownKey, isUpKey } from '@inquirer/core';
+
 /**
  * @typedef {{ value: string, name: string, checked: boolean, editable: boolean }} Item
  * @typedef {{ items: Item[], active: number }} ListState
@@ -17,15 +19,28 @@
  */
 
 /**
+ * Navigation goes through `@inquirer/core`'s own key tests with the theme's keybindings, as in
+ * the stock checkbox, so `INQUIRER_KEYBINDINGS=vim` (j/k) and `=emacs` (Ctrl-N/Ctrl-P) work
+ * here as they do in every other prompt of the screen. They are checked before the letters
+ * below, which is what keeps Ctrl-N "down" under emacs rather than "new".
+ *
  * @param {ListState} state
  * @param {Key} key
+ * @param {{ keybindings?: ReadonlyArray<'vim' | 'emacs'> }} [opts] - the theme's
  * @returns {{ state: ListState, outcome?: Outcome }} `outcome` only when the key leaves the list
  */
-export function pressKey(state, key) {
+export function pressKey(state, key, { keybindings = [] } = {}) {
     const { items, active } = state;
     const name = key.name ?? '';
+    const coreKey = { name, ctrl: Boolean(key.ctrl), shift: false, meta: Boolean(key.meta) };
 
     if (name === 'return' || name === 'enter') return { state, outcome: { action: 'submit' } };
+    if (items.length > 0 && isUpKey(coreKey, [...keybindings])) {
+        return { state: { items, active: Math.max(active - 1, 0) } };
+    }
+    if (items.length > 0 && isDownKey(coreKey, [...keybindings])) {
+        return { state: { items, active: Math.min(active + 1, items.length - 1) } };
+    }
     // Ctrl-A, Ctrl-E and friends are line-editing habits, not the letters this list uses.
     if (key.ctrl || key.meta) return { state };
     if (name === 'n') return { state, outcome: { action: 'new' } };
@@ -35,10 +50,6 @@ export function pressKey(state, key) {
     const toggleWhere = (pick) => items.map((item, index) => (pick(item, index) ? { ...item, checked: !item.checked } : item));
 
     switch (name) {
-        case 'up':
-            return { state: { items, active: Math.max(active - 1, 0) } };
-        case 'down':
-            return { state: { items, active: Math.min(active + 1, items.length - 1) } };
         case 'space':
             return { state: { items: toggleWhere((_, index) => index === active), active } };
         case 'a': {

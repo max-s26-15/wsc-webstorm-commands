@@ -18,6 +18,11 @@ import { styleText } from 'node:util';
 
 import { pressKey } from './checkboxKeys.js';
 
+/**
+ * `cursorHide` from `@inquirer/ansi`, which the stock checkbox ends its render with. Spelled
+ * out instead of imported: `@inquirer/core` does not re-export it, and one constant is not
+ * worth a fourth `@inquirer/*` dependency.
+ */
 const CURSOR_HIDE = '\u001b[?25l';
 
 /**
@@ -36,9 +41,16 @@ const CURSOR_HIDE = '\u001b[?25l';
  * }} ListConfig
  */
 
-/** @param {[string, string][]} keys */
-const helpLine = (keys) =>
-    keys.map(([key, action]) => `${styleText('bold', key)} ${styleText('dim', action)}`).join(styleText('dim', ' • '));
+/**
+ * The stock checkbox's key line: the key bold, what it does dimmed. Not the theme's
+ * `style.key`, which draws `<key>` and would make this list look unlike the one it replaces;
+ * the dimmed parts do come from the theme.
+ *
+ * @param {[string, string][]} keys
+ * @param {(text: string) => string} help - the theme's `style.help`
+ */
+const helpLine = (keys, help) =>
+    keys.map(([key, action]) => `${styleText('bold', key)} ${help(action)}`).join(help(' • '));
 
 const view = createPrompt(
     /**
@@ -55,7 +67,7 @@ const view = createPrompt(
         }));
 
         useKeypress((key) => {
-            const { state: next, outcome } = pressKey(state, key);
+            const { state: next, outcome } = pressKey(state, key, { keybindings: theme.keybindings });
             if (!outcome) {
                 setState(next);
                 return;
@@ -94,8 +106,8 @@ const view = createPrompt(
         if (state.items[state.active]?.editable) keys.push(['e', 'edit']);
         keys.push(['n', 'new command'], ['a', 'all'], ['i', 'invert'], ['⏎', 'submit']);
 
-        const body = state.items.length > 0 ? page : styleText('dim', '  (empty — press n to add a custom command)');
-        return `${[`${prefix} ${message}`, body, ' ', helpLine(keys)].join('\n')}${CURSOR_HIDE}`;
+        const body = state.items.length > 0 ? page : theme.style.help('  (empty — press n to add a custom command)');
+        return `${[`${prefix} ${message}`, body, ' ', helpLine(keys, theme.style.help)].join('\n')}${CURSOR_HIDE}`;
     },
 );
 

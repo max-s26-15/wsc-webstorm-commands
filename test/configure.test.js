@@ -441,6 +441,7 @@ describe('runConfigure — custom commands', () => {
     const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
     const withSeed = () => ({ ...emptyConfig(), presets: { default: [seed] } });
     const NAME = 'Name (it titles the terminal tab; empty to go back)';
+    const FIRST = 'Command (empty to go back)';
 
     test('only the list is shown until n is pressed', async () => {
         const { dir, cleanup } = await tmpProject();
@@ -465,7 +466,7 @@ describe('runConfigure — custom commands', () => {
             });
 
             assert.equal(code, 0);
-            assert.deepEqual(customAsked, [NAME, 'Command', 'Command 2 (empty to finish)', 'Command 3 (empty to finish)']);
+            assert.deepEqual(customAsked, [NAME, FIRST, 'Command 2 (empty to finish)', 'Command 3 (empty to finish)']);
             const [, list] = asked;
             assert.deepEqual(list.choices.at(-1), {
                 name: '⌘ seed db — npm i && npm run seed', value: newChoiceValue(0), checked: true, editable: true,
@@ -534,12 +535,21 @@ describe('runConfigure — custom commands', () => {
         }
     });
 
-    test('the first command is required; later ones end the list when left empty', async () => {
+    test('an empty first command also goes back, adding nothing — not even the name', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const { rejected } = await configure({ dir, steps: [{ action: 'new' }], inputs: ['seed', '', 'npm i', ''] });
-            assert.deepEqual(rejected, ['the first command is required']);
-            assert.deepEqual((await readPresets(dir)).presets.default[0].commands, ['npm i']);
+            const { asked, customAsked, rejected, output } = await configure({
+                dir,
+                steps: [{ action: 'new' }, { action: 'new' }],
+                inputs: ['seed', '', 'seed', 'npm i', ''],
+            });
+            assert.deepEqual(rejected, [], 'the name is free again: nothing was added');
+            assert.deepEqual(customAsked.slice(0, 2), [NAME, FIRST]);
+            assert.equal(asked.filter((a) => a.type === 'checkbox').length, 3);
+            assert.deepEqual((await readPresets(dir)).presets.default, [
+                { name: 'seed', mode: 'terminal', commands: ['npm i'] },
+            ]);
+            assert.match(output, /\+ seed/);
         } finally {
             await cleanup();
         }
@@ -786,15 +796,55 @@ describe('runConfigure — editing custom commands from the list', () => {
             const { rejected } = await edit({
                 dir,
                 menus: ['1. npm i', 'Change', '+ Add a command'],
-                inputs: ['npm i\u001b[2J', '', 'npm ci', 'echo\nrm', 'echo ok'],
+                inputs: ['npm i\u001b[2J', 'npm ci', 'echo\nrm', 'echo ok'],
             });
 
             assert.deepEqual(rejected, [
                 'a command cannot contain control characters',
-                'a command is required',
                 'a command cannot contain control characters',
             ]);
             assert.deepEqual((await saved(dir))[1].commands, ['npm ci', 'npm run seed', 'echo ok']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('every question in the menu has a way back: an empty answer changes nothing', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { editAsked, inputConfigs, rejected, output } = await edit({
+                dir,
+                menus: ['Name: seed db', '+ Add a command', '1. npm i', 'Change'],
+                inputs: ['', '', ''],
+            });
+
+            assert.deepEqual(rejected, []);
+            assert.deepEqual(inputConfigs.map((c) => c.message), [
+                'Name (it titles the terminal tab; empty to keep it)',
+                'New command (empty to go back)',
+                'Command 1 (empty to keep it)',
+            ]);
+            assert.deepEqual(editAsked.filter((m) => m.startsWith('Edit')), Array(4).fill('Edit "seed db"'));
+            assert.match(output, /unchanged/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('an entry called like a run configuration can keep its name', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const config = { ...emptyConfig(), presets: { default: [{ ...seed, name: 'web' }] } };
+            const { rejected, output } = await configure({
+                dir,
+                config,
+                steps: [{ action: 'edit', value: customChoiceValue('web') }],
+                menus: ['Name: web', 'Name: web', 'Name: www'],
+                inputs: ['web', 'www', 'web'],
+            });
+
+            assert.deepEqual(rejected, [], 'its own name, even after a rename on this screen');
+            assert.match(output, /unchanged/);
         } finally {
             await cleanup();
         }

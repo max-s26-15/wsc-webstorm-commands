@@ -62,6 +62,28 @@ describe('pressKey — the list itself', () => {
     });
 });
 
+describe('pressKey — INQUIRER_KEYBINDINGS, as the stock checkbox honours them', () => {
+    const at = (active) => ({ items: items(), active });
+
+    test('vim: j and k move the cursor', () => {
+        assert.equal(pressKey(at(0), key('j'), { keybindings: ['vim'] }).state.active, 1);
+        assert.equal(pressKey(at(1), key('k'), { keybindings: ['vim'] }).state.active, 0);
+    });
+
+    test('emacs: ctrl-n and ctrl-p move the cursor, and ctrl-n is not n', () => {
+        const down = pressKey(at(0), key('n', { ctrl: true }), { keybindings: ['emacs'] });
+        assert.equal(down.state.active, 1);
+        assert.equal(down.outcome, undefined);
+        assert.equal(pressKey(at(1), key('p', { ctrl: true }), { keybindings: ['emacs'] }).state.active, 0);
+    });
+
+    test('without them, j does nothing and ctrl-n neither moves nor adds', () => {
+        const state = at(0);
+        assert.deepEqual(pressKey(state, key('j')), { state });
+        assert.deepEqual(pressKey(state, key('n', { ctrl: true })), { state });
+    });
+});
+
 describe('pressKey — leaving the list', () => {
     test('enter submits', () => {
         assert.deepEqual(pressKey({ items: items(), active: 0 }, key('return')).outcome, { action: 'submit' });
