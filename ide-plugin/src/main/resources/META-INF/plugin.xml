@@ -31,4 +31,10 @@
         <mcpServer.mcpToolset implementation="dev.wsc.ide.WscTerminalToolset"/>
         <mcpServer.mcpToolset implementation="dev.wsc.ide.WscControlToolset"/>
     </extensions>
+
+    <projectListeners>
+        <!-- Which configuration and executor each process was started with, for list_running and
+             stop/restart_run_configuration: public API, unlike reading it off a Run tab. -->
+        <listener class="dev.wsc.ide.RunRegistryListener" topic="com.intellij.execution.ExecutionListener"/>
+    </projectListeners>
 </idea-plugin>

@@ -2,11 +2,11 @@ package dev.wsc.ide
 
 import com.intellij.execution.ExecutionManager
 import com.intellij.execution.RunManager
-import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
-import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.execution.ui.RunContentManager
 import com.intellij.mcpserver.McpExpectedError
 import com.intellij.mcpserver.McpToolset
 import com.intellij.mcpserver.annotations.McpDescription
@@ -30,7 +30,7 @@ import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 /**
  * What `wsc --stop` and `wsc --restart` need from the IDE: what is running right now. The IDE's
  * own MCP Server has no tool that answers that, and `wsc` deliberately keeps no record of what it
- * launched — the IDE is the record.
+ * launched — the IDE is the record. Which configuration a process runs comes from [RunRegistry].
  */
 class WscControlToolset : McpToolset {
 
@@ -39,18 +39,17 @@ class WscControlToolset : McpToolset {
         """
         |List what is running in the project: run configurations with a live process in the Run or Debug tool window
         |(`runs`), and the Terminal tabs `open_terminal_tab` marked (`terminals`), each with whether a command is
-        |running in it right now. Unmarked Terminal tabs are not listed.
+        |running in it right now. Unmarked Terminal tabs are not listed, nor processes started before this plugin was loaded.
         """,
     )
     suspend fun list_running(): String {
         val project = currentCoroutineContext().project
 
-        // The tabs and the run descriptors are UI state, read on the EDT.
-        val (runs, marked) = withContext(Dispatchers.EDT) {
-            val runs = liveDescriptors(project).map { it.runConfigurationName to isDebug(project, it) }
-            val marked = TerminalToolWindowManager.getInstance(project).terminalWidgets
+        val runs = RunRegistry.getInstance(project).live().map { (_, run) -> run }
+        // The tabs are UI state, read on the EDT.
+        val marked = withContext(Dispatchers.EDT) {
+            TerminalToolWindowManager.getInstance(project).terminalWidgets
                 .mapNotNull { widget -> TabMarks.get(widget)?.let { widget to it } }
-            runs to marked
         }
         // Never on the EDT: isCommandRunning() asserts a background thread and may inspect the
         // process tree (`ps`) or show a modal progress to do it.
@@ -58,10 +57,10 @@ class WscControlToolset : McpToolset {
 
         return buildJsonObject {
             putJsonArray("runs") {
-                for ((name, debug) in runs) {
+                for (run in runs) {
                     addJsonObject {
-                        put("configurationName", name)
-                        put("mode", if (debug) "debug" else "run")
+                        put("configurationName", run.name)
+                        put("mode", if (run.debug) "debug" else "run")
                     }
                 }
             }
@@ -95,13 +94,9 @@ class WscControlToolset : McpToolset {
         val project = currentCoroutineContext().project
         checkMode(mode)
 
-        val handlers = withContext(Dispatchers.EDT) {
-            liveDescriptors(project)
-                .filter { it.runConfigurationName == configurationName && inMode(project, it, mode) }
-                .mapNotNull { it.processHandler }
-                .onEach { it.destroyProcess() }
-        }
+        val handlers = matching(project, configurationName, mode).map { (handler, _) -> handler }
         if (handlers.isEmpty()) return "\"$configurationName\" is not running"
+        withContext(Dispatchers.EDT) { handlers.forEach { it.destroyProcess() } }
 
         // destroyProcess() only asks; the process is gone once its handler says so.
         withTimeoutOrNull(STOP_TIMEOUT_MS) {
@@ -128,51 +123,59 @@ class WscControlToolset : McpToolset {
 
         // Every one of them, not the first: a configuration that allows parallel runs has one tab
         // per run, and a caller that names it once means all of them.
-        val running = withContext(Dispatchers.EDT) {
-            liveDescriptors(project)
-                .filter { it.runConfigurationName == configurationName && inMode(project, it, mode) }
-                .map { it to isDebug(project, it) }
-        }
+        val running = matching(project, configurationName, mode)
         if (running.isEmpty()) throw fail("\"$configurationName\" is not running, so there is nothing to restart")
 
-        val settings = RunManager.getInstance(project).findConfigurationByName(configurationName)
-            ?: throw fail("No run configuration named \"$configurationName\" in ${project.name}")
-
         // Each completed by the IDE once its new process is up in its tab — as in debug_run_configuration.
-        val restarts = running.map { (descriptor, debug) -> Triple(descriptor, debug, CompletableDeferred<String>()) }
-
-        withContext(Dispatchers.EDT) {
-            for ((descriptor, debug, started) in restarts) {
-                val executor = if (debug) DefaultDebugExecutor.getDebugExecutorInstance() else DefaultRunExecutor.getRunExecutorInstance()
+        val restarts = withContext(Dispatchers.EDT) {
+            val tabs = RunContentManager.getInstance(project).allDescriptors
+            // Every environment is built before any process is restarted, so a refusal here
+            // leaves all of them running instead of some.
+            running.map { (handler, run) ->
+                val settings = run.settings
+                    ?: RunManager.getInstance(project).findConfigurationByName(configurationName)
+                    ?: throw fail("No run configuration named \"$configurationName\" in ${project.name}")
+                // contentToReuse is what keeps it the same tab, and what tells the IDE which
+                // process the restart replaces; without it a second copy would start beside it.
+                val descriptor = tabs.firstOrNull { it.processHandler === handler }
+                    ?: throw fail("\"$configurationName\" cannot be restarted: its Run or Debug tab was not found")
+                val started = CompletableDeferred<String>()
                 val callback = ProgramRunner.Callback { tab -> started.complete(tab?.displayName ?: configurationName) }
-                // contentToReuse is what keeps it the same tab; restartRunProfile is the Rerun button's
-                // own path, which stops the old process first instead of asking whether to.
-                val environment = ExecutionEnvironmentBuilder.createOrNull(executor, settings)
+                val environment = ExecutionEnvironmentBuilder.createOrNull(run.executor, settings)
                     ?.contentToReuse(descriptor)
                     ?.build(callback)
                     ?: throw fail("\"$configurationName\" cannot be restarted: the IDE could not build an execution environment")
-                ExecutionManager.getInstance(project).restartRunProfile(environment)
+                Restart(run, environment, started)
             }
         }
+        // restartRunProfile is the Rerun button's own path, which stops the old process first
+        // instead of asking whether to.
+        withContext(Dispatchers.EDT) { restarts.forEach { ExecutionManager.getInstance(project).restartRunProfile(it.environment) } }
 
-        val windows = restarts.map { (_, debug) -> if (debug) "Debug" else "Run" }.distinct()
-        val tabs = withTimeoutOrNull(CONFIRM_TIMEOUT_MS) { restarts.map { (_, _, started) -> started.await() } }
+        val windows = restarts.map { if (it.run.debug) "Debug" else "Run" }.distinct()
+        val tabs = withTimeoutOrNull(CONFIRM_TIMEOUT_MS) { restarts.map { it.started.await() } }
             ?: throw fail(
                 "the IDE did not confirm within ${CONFIRM_TIMEOUT_MS / 1000}s that \"$configurationName\" restarted — " +
                     "check the ${windows.joinToString(" and ")} tool window",
             )
-        restarts.zip(tabs).forEach { (restart, tab) -> if (restart.second) DebugMute.muteFor(project, settings.configuration, tab) }
+        restarts.zip(tabs).forEach { (restart, tab) ->
+            if (restart.run.debug) DebugMute.muteFor(project, restart.environment.runProfile, tab)
+        }
         return "restarted \"$configurationName\" (${windows.joinToString(", ") { it.lowercase() }})"
     }
+
+    private class Restart(val run: RunRegistry.Run, val environment: ExecutionEnvironment, val started: CompletableDeferred<String>)
+
+    /** The live processes of this configuration, in that tool window when `mode` names one. */
+    private fun matching(project: Project, configurationName: String, mode: String?): List<Pair<ProcessHandler, RunRegistry.Run>> =
+        RunRegistry.getInstance(project).live()
+            .filter { (_, run) -> run.name == configurationName && (mode == null || (mode == "debug") == run.debug) }
 
     private fun fail(text: String) = McpExpectedError(text, JsonObject(emptyMap()))
 
     private fun checkMode(mode: String?) {
         if (mode != null && mode !in RUN_MODES) throw fail("mode must be one of $RUN_MODES, got $mode")
     }
-
-    private fun inMode(project: Project, descriptor: RunContentDescriptor, mode: String?): Boolean =
-        mode == null || (mode == "debug") == isDebug(project, descriptor)
 
     companion object {
         /** A process that has not stopped by now is not going to on its own. */
@@ -185,15 +188,5 @@ class WscControlToolset : McpToolset {
 
         /** The two tool windows a run configuration's process can be in. */
         val RUN_MODES = setOf("run", "debug")
-
-        /** Run/Debug tabs of a run configuration whose process is still alive. */
-        fun liveDescriptors(project: Project): List<RunContentDescriptor> =
-            ExecutionManager.getInstance(project).getRunningDescriptors { true }.filter {
-                it.runConfigurationName != null && it.processHandler?.isProcessTerminated == false
-            }
-
-        fun isDebug(project: Project, descriptor: RunContentDescriptor): Boolean =
-            ExecutionManager.getInstance(project).getExecutors(descriptor)
-                .any { it.id == DefaultDebugExecutor.EXECUTOR_ID }
     }
 }

@@ -500,6 +500,14 @@ exercises it.
   only once acted on. `stop_run_configuration` / `stop_terminal_tab` answer "is not running" instead of
   failing, so one configuration running in a Run tab *and* a Terminal tab can take two stops.
   `ControlError` and `RunningPayloadError` are in `KNOWN_ERRORS`.
+  **The plugin uses no internal API, and CI's `verifyPlugin` fails if it does** (`INTERNAL_API_USAGES`; the release
+  workflow runs it too). `RunContentDescriptor.runConfigurationName`, `ExecutionManager.getRunningDescriptors` and
+  `getExecutors` are all `@ApiStatus.Internal`, so which configuration and executor a process runs comes from
+  `RunRegistry` — a project service fed by an `ExecutionListener` (`projectListeners` in plugin.xml), a `WeakHashMap`
+  keyed by `ProcessHandler` whose value never points back at its key — and the tab to reuse from the public
+  `RunContentManager.allDescriptors` by handler identity. Cost: a process started before the plugin was loaded is
+  invisible until restarted. Run `./gradlew verifyPlugin` locally after touching the plugin: `buildPlugin` alone
+  does not catch it.
   **One call per place, not per tab** (`places()` in `planControl()`): every plugin tool acts on *all* tabs
   of the entry it names — the terminal ones by mark, the run ones by name plus `mode` (`run`|`debug`, so a
   Run tab and a Debug tab of one configuration are two steps) — so a per-tab call stopped both tabs, then

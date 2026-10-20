@@ -49,6 +49,10 @@ configurations with a live process, `mode` `run` or `debug`) and `terminals`. A 
 `open_terminal_tab` marked it: since 0.6.0 that tool takes an optional `kind` (`config` | `custom`), `mode` and
 `debugPort`, and keeps them on the tab's widget in memory — not on its title, which the shell is free to change, and
 never on disk. A tab opened by an older wsc, by hand, or before the IDE restarted carries no mark and is left alone.
+Which configuration a Run or Debug process belongs to, and with which executor it started, is recorded by an
+`ExecutionListener` as the IDE starts it (`RunRegistry`): a Run tab carries both only through internal API, which the
+plugin verifier refuses. A process started before the plugin was loaded — before a dynamic install or update — is
+therefore not listed until it is started again.
 The run tools are the Stop and Rerun buttons: a restart stays in the same tab (`restartRunProfile` with the old tab as
 the content to reuse) and is confirmed by the IDE within 10 s; a restarted debug session is muted like a new one.
 The terminal tools press Ctrl-C in the marked tab and wait up to 5 s for `TerminalWidget.isCommandRunning()` to turn

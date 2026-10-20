@@ -16,7 +16,7 @@ plugin (tags `plugin-v*`). Format: [Keep a Changelog](https://keepachangelog.com
 ## [plugin 0.6.0] - 2026-MM-DD
 
 ### Added
-- `list_running` — the run configurations with a live process, and the Terminal tabs wsc opened with whether a command is running in them. What `wsc --stop` and `wsc --restart` ask.
+- `list_running` — the run configurations with a live process, and the Terminal tabs wsc opened with whether a command is running in them. What `wsc --stop` and `wsc --restart` ask. A process started before the plugin was loaded (installed or updated without restarting the IDE) is not listed until it is started again.
 - `stop_run_configuration` / `restart_run_configuration` — Stop and Rerun for every live process of a configuration, optionally only in the Run or the Debug tool window (`mode`); each restart stays in its own tab, and a restarted debug session has its breakpoints muted.
 - `stop_terminal_tab` / `restart_terminal_tab` — Ctrl-C in wsc's Terminal tab for an entry, and for a restart the command typed again in the same tab once the old one has stopped (5 s, otherwise an error and nothing typed).
 

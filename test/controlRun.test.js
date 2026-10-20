@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { runControl } from '../src/control/run.js';
 import { shellQuote } from '../src/exec/planBuilder.js';
+import { POSIX_SH, skipWithoutPosixSh } from '../test-utils/shells.js';
 import { RunningPayloadError } from '../src/mcp/control.js';
 import { McpToolError } from '../src/mcp/client.js';
 import { createLogger } from '../src/log.js';
@@ -362,7 +363,7 @@ describe('runControl — --restart', () => {
 });
 
 describe('runControl — a restart types into a shell the command has moved', () => {
-    test('the command starts from the project root, so its own `cd` works the second time too', async () => {
+    test('the command starts from the project root, so its own `cd` works the second time too', { skip: skipWithoutPosixSh }, async () => {
         // A space in the path, so the cd has to be quoted to work at all.
         const root = await mkdtemp(path.join(os.tmpdir(), 'wsc restart '));
         try {
@@ -380,7 +381,7 @@ describe('runControl — a restart types into a shell the command has moved', ()
             // The tab's shell as a launch leaves it: opened in the project root, then moved by the
             // command itself — and a restart types into that same shell, twice here.
             const launched = commands.join(' && ');
-            execFileSync('/bin/sh', ['-c', `cd ${shellQuote(root)} && ${launched}; ${args.command}; ${args.command}; true`], { stdio: 'ignore' });
+            execFileSync(POSIX_SH, ['-c', `cd ${shellQuote(root)} && ${launched}; ${args.command}; ${args.command}; true`], { stdio: 'ignore' });
             assert.equal(await readFile(path.join(root, 'web', 'started.log'), 'utf8'), 'up\nup\nup\n');
         } finally {
             await rm(root, { recursive: true, force: true });
