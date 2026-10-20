@@ -4,6 +4,25 @@ Two things are released from this repository, each on its own version line: the 
 command line tool (npm package `webstorm-commands`, tags `v*`) and the wsc Companion IDE
 plugin (tags `plugin-v*`). Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [cli 0.2.0] - 2026-MM-DD
+
+### Added
+- `wsc --stop` and `wsc --restart`: stop or restart what runs from the presets — every preset, the ones named with `--preset`, or single entries by name (custom commands too). A restart stays in the same Run, Debug or Terminal tab; an entry whose preset now gives it another mode is stopped and launched anew. Nothing is recorded: the IDE is asked what runs, every time. Needs wsc Companion 0.6.0.
+- Tab completion offers the presets' entries after `--stop` / `--restart`.
+
+### Changed
+- Terminal tabs opened through wsc Companion carry a mark (the entry's kind, mode and inspector port), which is how `--stop` and `--restart` find them again.
+
+## [plugin 0.6.0] - 2026-MM-DD
+
+### Added
+- `list_running` — the run configurations with a live process, and the Terminal tabs wsc opened with whether a command is running in them. What `wsc --stop` and `wsc --restart` ask. A process started before the plugin was loaded (installed or updated without restarting the IDE) is not listed until it is started again.
+- `stop_run_configuration` / `restart_run_configuration` — Stop and Rerun for every live process of a configuration, optionally only in the Run or the Debug tool window (`mode`); each restart stays in its own tab, and a restarted debug session has its breakpoints muted.
+- `stop_terminal_tab` / `restart_terminal_tab` — Ctrl-C in wsc's Terminal tab for an entry, and for a restart the command typed again in the same tab once the old one has stopped (5 s, otherwise an error and nothing typed).
+
+### Changed
+- `open_terminal_tab` takes an optional `kind`, `mode` and `debugPort`, and marks the tab with them, in memory only. Unmarked tabs — opened by an older wsc, by hand, or before an IDE restart — are invisible to the tools above.
+
 ## [cli 0.1.0] - 2026-MM-DD
 
 First public release.

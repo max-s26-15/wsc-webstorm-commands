@@ -21,6 +21,8 @@ configuration behind it, launched as a named Terminal tab.
 Since then: Tab completion for zsh and bash (`wsc --completion <shell>`, `src/completion/`).
 Since then: `wsc --delete-preset <name>` — a fifth intent that edits `.idea/webstorm-commands.json`
 and never contacts the IDE.
+Since then: `wsc --stop` / `wsc --restart` — a sixth and seventh intent that act on what runs from the
+presets, asking wsc Companion 0.6.0 (`list_running` and four stop/restart tools) every time; CLI 0.2.0.
 Since then: custom commands are added (`n`) and edited (`e`) from the `wsc -c` list itself, which is
 now wsc's own prompt (`src/ui/editableCheckbox.js` on `@inquirer/core`).
 Since then: public-release preparation — npm package `webstorm-commands` (MIT, `engines.node >=22`,
@@ -80,8 +82,9 @@ exercises it.
   keep it that way so `src/cli.js` stays unit-testable without spawning a process. It has no static import at all,
   and `test/completionBoundary.test.js` pins that.
 - `src/cli.js` — argument parsing (`node:util.parseArgs`) and the `runCli(argv): Promise<number>` contract
-  every flag plugs into. Five intents live in it, and each one refuses the others' flags rather than
-  half-honouring a command line: a launch, `--configure`, `--list`, `--completion`, and `--delete-preset`.
+  every flag plugs into. Seven intents live in it, and each one refuses the others' flags rather than
+  half-honouring a command line: a launch, `--configure`, `--list`, `--completion`, `--delete-preset`,
+  `--stop` and `--restart`.
 - `src/log.js` — `createLogger()`: leveled logging (`WSC_LOG_LEVEL`), `NO_COLOR`/`FORCE_COLOR`/`TERM=dumb`
   aware. Diagnostics go to stderr, `out()` is the only thing that writes to stdout, so `wsc --list` (and a
   `--dry-run` plan) stays pipeable. `color` is decided from **stderr**'s TTY-ness, not stdout's.
@@ -474,6 +477,47 @@ exercises it.
   go through `hasPreset()`, and the surviving preset map is rebuilt with `Object.fromEntries` rather than a
   spread-then-`delete`, so a preset named `constructor` or `__proto__` deletes cleanly instead of touching
   the prototype.
+- **`--stop` / `--restart` (`src/control/`, `src/mcp/control.js`) — the IDE is the record.** Nothing about
+  what `wsc` launched is written anywhere: every run asks the plugin's `list_running` (Run/Debug
+  descriptors with a live process, plus the Terminal tabs it marked) and `selectTargets()` matches that
+  against the preset file as it reads *now*. A Terminal tab is recognised by a **mark** `open_terminal_tab`
+  keeps on the widget in memory (`TabMarks` in the plugin: entry name, `kind` config|custom, `mode`,
+  `debugPort`), never by its title, which zsh may rewrite and which two entries can share — so
+  `buildExecutionPlan()` passes that mark on every plugin Terminal call (`terminalTabCall(name, command,
+  mark)`); unmarked tabs (older plugin, by hand, piped, after an IDE restart) are invisible by design.
+  Without `--preset` the scope is **every** preset, not `defaultPreset`. Only what runs is acted on: an
+  entry stopped by hand stays stopped, a named one that is not running is info for `--stop` and an error
+  for `--restart`. The **setup** is the entry's `mode` in the current preset; the mark records the entry's
+  mode, not `--target`, so a run entry sent to the terminal still reads as `run` and restarts there.
+  Same setup → restart in place (`restart_run_configuration` = Rerun with `contentToReuse`, debug
+  re-muted; `restart_terminal_tab` = Ctrl-C, wait ≤5 s for `isCommandRunning()` false, type the command
+  rebuilt from the preset — `customCommandLine()` or `commandFor()` with the mark's mode and port). Changed
+  setup → stop every instance, then (only if every stop worked) the ordinary `buildLaunchPlan()` +
+  `buildExecutionPlan()` + `executePlan()` launch, after all other steps. Everything a restart will send is
+  built before the `--dry-run` return, and `assertPosixTerminal()` counts `restart_terminal_tab` as a
+  terminal call. A stale preset entry is skipped rather than fatal, a `name:mode` token is a usage error
+  unless it is an exact entry name, and two different custom commands of one name are a `ControlError`
+  only once acted on. `stop_run_configuration` / `stop_terminal_tab` answer "is not running" instead of
+  failing, so one configuration running in a Run tab *and* a Terminal tab can take two stops.
+  `ControlError` and `RunningPayloadError` are in `KNOWN_ERRORS`.
+  **The plugin uses no internal API, and CI's `verifyPlugin` fails if it does** (`INTERNAL_API_USAGES`; the release
+  workflow runs it too). `RunContentDescriptor.runConfigurationName`, `ExecutionManager.getRunningDescriptors` and
+  `getExecutors` are all `@ApiStatus.Internal`, so which configuration and executor a process runs comes from
+  `RunRegistry` — a project service fed by an `ExecutionListener` (`projectListeners` in plugin.xml), a `WeakHashMap`
+  keyed by `ProcessHandler` whose value never points back at its key — and the tab to reuse from the public
+  `RunContentManager.allDescriptors` by handler identity. Cost: a process started before the plugin was loaded is
+  invisible until restarted. Run `./gradlew verifyPlugin` locally after touching the plugin: `buildPlugin` alone
+  does not catch it.
+  **One call per place, not per tab** (`places()` in `planControl()`): every plugin tool acts on *all* tabs
+  of the entry it names — the terminal ones by mark, the run ones by name plus `mode` (`run`|`debug`, so a
+  Run tab and a Debug tab of one configuration are two steps) — so a per-tab call stopped both tabs, then
+  found nothing running and reported a false failure (an entry launched twice is exactly the duplicate this
+  feature exists for). Terminal tabs of one entry on different inspector ports cannot share one restart
+  command and are a `ControlError` before anything is touched. **A restart command starts with
+  `cd <projectRoot> &&`**: it is typed into the tab's *same* interactive shell, which the launch's own
+  `cd web && npm run dev` left in `web/`, so without it the second `cd web` fails, `&&` stops, and the
+  plugin still answers "sent" — pinned by running launch + restart + restart through one `/bin/sh`. The
+  not-running hint never says `wsc <name>`: a positional launches `defaultPreset` beside it.
 - **Terminal commands are reconstructed from the IDE's naming convention**, because
   `get_run_configurations` reports only `name` and `description`. WebStorm names an npm configuration after
   its script, prefixed with the package.json directory when it is not the project root (`client > bundle:build`
