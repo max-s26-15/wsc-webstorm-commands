@@ -7,6 +7,7 @@ import {
     RunConfigPayloadError,
     UnknownConfigurationError,
     buildLaunchPlan,
+    buildScheduledLaunchPlan,
     formatPlan,
     isCustomPlanEntry,
     levenshtein,
@@ -404,5 +405,130 @@ describe('buildLaunchPlan — custom command entries', () => {
     test('formatPlan shows it as an ordinary terminal entry of the preset', () => {
         const plan = buildLaunchPlan({ configs: CONFIGS, preset: [seed] });
         assert.equal(formatPlan(plan), 'seed db  terminal  (preset)');
+    });
+});
+
+describe('buildScheduledLaunchPlan', () => {
+    const configs = [{ name: 'db' }, { name: 'api' }, { name: 'web' }];
+    const run = (name, mode = 'run') => ({ name, mode });
+    const group = (name, waitAfterSeconds, entries) => ({ name, waitAfterSeconds, entries });
+    const custom = (name, commands = ['echo hi']) => ({ name, mode: 'terminal', commands });
+    /** @param {object} args */
+    const build = (args) => buildScheduledLaunchPlan({ configs, ...args });
+    const namesOf = (plan) => plan.map((entry) => entry.name);
+
+    test('one global plan, and a barrier per pause', () => {
+        const { plan, barriers } = build({
+            presets: [group('infra', 10, [run('db')]), group('api', 5, [run('api')]), group('web', 0, [run('web')])],
+        });
+        assert.deepEqual(namesOf(plan), ['db', 'api', 'web']);
+        assert.deepEqual(barriers, [
+            { after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] },
+            { after: 2, presetName: 'api', waitAfterSeconds: 5, members: [1] },
+        ]);
+    });
+
+    test('a preset launched alone has nothing to wait for', () => {
+        const { plan, barriers } = build({ presets: [group('infra', 10, [run('db')])] });
+        assert.deepEqual(namesOf(plan), ['db']);
+        assert.deepEqual(barriers, []);
+    });
+
+    test('a trailing pause is dropped, an earlier one stays', () => {
+        const { barriers } = build({ presets: [group('a', 1, [run('db')]), group('b', 2, [run('api')])] });
+        assert.deepEqual(barriers, [{ after: 1, presetName: 'a', waitAfterSeconds: 1, members: [0] }]);
+    });
+
+    test('an empty preset makes no pause', () => {
+        const { barriers } = build({ presets: [group('infra', 10, []), group('web', 0, [run('web')])] });
+        assert.deepEqual(barriers, []);
+    });
+
+    test('a preset of nothing but shared entries keeps its pause, at its own boundary', () => {
+        const { plan, barriers } = build({
+            presets: [group('a', 0, [run('db')]), group('dup', 5, [run('db')]), group('b', 0, [run('api')])],
+        });
+        assert.deepEqual(namesOf(plan), ['db', 'api']);
+        assert.deepEqual(barriers, [{ after: 1, presetName: 'dup', waitAfterSeconds: 5, members: [0] }]);
+    });
+
+    test('a preset named twice pauses twice, launching its entries once', () => {
+        const infra = group('infra', 10, [run('db')]);
+        const { plan, barriers } = build({ presets: [infra, infra, group('web', 0, [run('web')])] });
+        assert.deepEqual(namesOf(plan), ['db', 'web']);
+        assert.deepEqual(barriers, [
+            { after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] },
+            { after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] },
+        ]);
+    });
+
+    test('a custom entry and a configuration of one name are two members', () => {
+        const { plan, barriers } = build({
+            presets: [group('a', 3, [run('db'), custom('db')]), group('b', 0, [run('web')])],
+        });
+        assert.deepEqual(namesOf(plan), ['db', 'db', 'web']);
+        assert.deepEqual(barriers, [{ after: 2, presetName: 'a', waitAfterSeconds: 3, members: [0, 1] }]);
+    });
+
+    test('membership goes by the resolved name, not the typed one', () => {
+        const { barriers } = build({
+            presets: [group('a', 0, [run('db')]), group('b', 2, [run('DB'), run('api')]), group('c', 0, [run('web')])],
+        });
+        assert.deepEqual(barriers, [{ after: 2, presetName: 'b', waitAfterSeconds: 2, members: [0, 1] }]);
+    });
+
+    test('members are absolute indexes, whatever order the preset lists them in', () => {
+        const { barriers } = build({
+            presets: [group('a', 0, [run('db')]), group('b', 2, [run('api'), run('db')]), group('c', 0, [run('web')])],
+        });
+        assert.deepEqual(barriers[0].members, [0, 1]);
+    });
+
+    test('a command-line override keeps the position, a new name lands after the last pause', () => {
+        const { plan, barriers } = build({
+            presets: [group('infra', 10, [run('db')])],
+            requests: [run('db', 'debug'), run('web')],
+        });
+        assert.deepEqual(namesOf(plan), ['db', 'web']);
+        assert.equal(plan[0].mode, 'debug');
+        assert.equal(plan[0].source, 'cli');
+        assert.deepEqual(barriers, [{ after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] }]);
+    });
+
+    test('an override alone adds nothing to launch, so the pause is still a trailing one', () => {
+        const { barriers } = build({ presets: [group('infra', 10, [run('db')])], requests: [run('db', 'debug')] });
+        assert.deepEqual(barriers, []);
+    });
+
+    test('a shared entry keeps its first position and takes the last mode and commands', () => {
+        const { plan } = build({
+            presets: [
+                group('a', 0, [run('db'), custom('seed', ['one'])]),
+                group('b', 0, [run('api'), run('db', 'debug'), custom('seed', ['two'])]),
+            ],
+        });
+        assert.deepEqual(namesOf(plan), ['db', 'seed', 'api']);
+        assert.equal(plan[0].mode, 'debug');
+        assert.deepEqual(plan[1].commands, ['two']);
+    });
+
+    test('a bad name in the last preset throws before there is a plan', () => {
+        assert.throws(
+            () => build({ presets: [group('a', 10, [run('db')]), group('b', 0, [run('nope')])] }),
+            UnknownConfigurationError,
+        );
+        assert.throws(
+            () => build({ presets: [group('a', 10, [run('db')])], requests: [run('nope')] }),
+            UnknownConfigurationError,
+        );
+    });
+
+    test('buildLaunchPlan is the same merge without the barriers', () => {
+        const preset = [run('db'), custom('seed'), run('api', 'debug')];
+        const requests = [run('web'), run('db', 'debug')];
+        assert.deepEqual(
+            buildLaunchPlan({ configs, preset, requests }),
+            build({ presets: [group('x', 0, preset)], requests }).plan,
+        );
     });
 });
