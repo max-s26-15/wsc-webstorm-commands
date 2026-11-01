@@ -11,10 +11,14 @@ First public release.
 ### Added
 - Launch a set of WebStorm run configurations at once, each in its own Run/Debug or Terminal tab (`wsc a b:debug c:terminal`).
 - Presets in `.idea/webstorm-commands.json`, edited with `wsc -c`, several at once with `--preset a b`, deleted with `--delete-preset`.
+- A pause after a preset (`t` in the `wsc -c` list, `waitAfterSeconds` in the file, 0 to 86400 seconds): `wsc --preset a b` starts `a`, waits, then starts `b`. A failed launch in `a` stops what is behind the pause, Ctrl-C during it exits 130, and it works on every path, including `--fallback=terminal`.
 - Custom command entries in a preset (a named Terminal tab with no run configuration behind it), added (`n`), edited (`e`: rename; change, add, delete or reorder commands) and deleted from the `wsc -c` list.
 - `--list`, `--dry-run`, `--target=terminal`, `--debug-port`, `--fallback=retry|terminal` (OS terminal tabs without the IDE).
 - Tab completion for zsh and bash (`wsc --completion <shell>`).
 - `wsc-mcp-probe`, a diagnostic for the IDE's MCP Server.
+
+### Changed
+- The preset file is now schema version 2: a preset is an object, `{ "entries": [...] }`. Version 0 and 1 files keep loading, upgraded in memory on read and on disk at the next real write. An older `wsc` refuses a version 2 file.
 
 ### Platform support
 - Linux, macOS, Windows, tested in CI with Node 22, 24 and 26.
