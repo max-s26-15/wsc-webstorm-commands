@@ -637,3 +637,18 @@ describe('usesPipedTerminal', () => {
         assert.doesNotMatch(`${DEBUG_PLUGIN_HINT}\n${PIPED_TERMINAL_NOTE}`, /ide-plugin\/README/);
     });
 });
+
+describe('formatExecutionPlan — with pauses', () => {
+    const call = (name) => ({ name, mode: 'run', tool: 'execute_run_configuration', arguments: { configurationName: name } });
+
+    test('puts the pause between the calls it separates', () => {
+        const text = formatExecutionPlan([call('db'), call('web')], [
+            { after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] },
+        ]);
+        assert.equal(text, [
+            '→ execute_run_configuration  db',
+            '→ wait 10s after preset "infra"',
+            '→ execute_run_configuration  web',
+        ].join('\n'));
+    });
+});

@@ -55,7 +55,7 @@ const run = async (opts = {}) => {
     const adapter = { id: 'gnome-terminal', opens: 'tab' };
     const code = await runTerminalFallback({
         presetName: 'default',
-        presetEntries: opts.presetEntries ?? [],
+        presetGroups: [{ name: 'default', entries: opts.presetEntries ?? [], waitAfterSeconds: 0 }],
         positionals: opts.positionals ?? [],
         projectRoot: ROOT,
         debugPortBase: opts.debugPortBase ?? 9229,
@@ -254,7 +254,7 @@ describe('runTerminalFallback — --dry-run and the pool', () => {
         const stderr = fakeStream();
         const code = await runTerminalFallback({
             presetName: 'default',
-            presetEntries: [],
+            presetGroups: [],
             positionals: ['web'],
             projectRoot: ROOT,
             debugPortBase: 9229,
@@ -274,7 +274,7 @@ describe('runTerminalFallback — --dry-run and the pool', () => {
         const stderr = fakeStream();
         await runTerminalFallback({
             presetName: 'default',
-            presetEntries: [],
+            presetGroups: [],
             positionals: ['web:debug'],
             projectRoot: ROOT,
             debugPortBase: 9229,

@@ -15,6 +15,9 @@ import path from 'node:path';
 import { runCli } from '../src/cli.js';
 import { BASH_SCRIPT, ZSH_SCRIPT } from '../src/completion/scripts.js';
 import { formatRunConfigs } from '../src/list.js';
+import { McpToolError } from '../src/mcp/client.js';
+import { createControlledWait } from '../test-utils/controlled-wait.js';
+import { fakeSignals } from '../test-utils/fake-child.js';
 import { FIXTURE, fakeCliDeps } from '../test-utils/fake-cli-deps.js';
 import { tmpIdeaProject, tmpProject } from '../test-utils/tmp-dir.js';
 
@@ -923,6 +926,270 @@ describe('custom commands in a preset', () => {
         const result = await wsc([], { config, deps: { port: null, fallbackChoice: { kind: 'terminal' } } });
 
         assert.equal(result.code, 0);
-        assert.deepEqual(result.fellBack[0].presetEntries, [seed]);
+        assert.deepEqual(result.fellBack[0].presetGroups.flatMap((group) => group.entries), [seed]);
+    });
+});
+
+describe('preset pauses, end to end', { timeout: 10000 }, () => {
+    const CONFIG = JSON.stringify({
+        version: 2,
+        defaultPreset: 'infra',
+        presets: {
+            infra: { entries: [{ name: 'web' }], waitAfterSeconds: 10 },
+            api: { entries: [{ name: 'api' }], waitAfterSeconds: 5 },
+            back: { entries: [{ name: 'addon-client' }] },
+        },
+    });
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+    /**
+     * The real executePlan() and the real runner; only the IDE and the clock are fake.
+     *
+     * @param {string[]} argv
+     * @param {object} [opts]
+     */
+    async function start(argv, opts = {}) {
+        const project = opts.idea
+            ? await tmpIdeaProject({ presets: opts.config ?? CONFIG })
+            : await tmpProject(opts.config ?? CONFIG);
+        const h = fakeCliDeps({ cwd: project.dir, ...opts.deps });
+        delete h.deps.executePlan;
+        if (opts.realFallback) delete h.deps.runTerminalFallback;
+        const clock = createControlledWait();
+        const signals = fakeSignals();
+        h.deps.wait = clock.wait;
+        h.deps.process = signals;
+        const running = runCli(argv, h.deps);
+        return {
+            h,
+            clock,
+            signals,
+            running,
+            launched: () => h.calls
+                .filter((c) => c.type === 'call' && c.name === 'execute_run_configuration')
+                .map((c) => c.args.configurationName),
+            cleanup: project.cleanup,
+        };
+    }
+
+    for (const argv of [['--preset', 'infra', 'api', 'back'], ['--preset', 'infra', '--preset', 'api', '--preset', 'back']]) {
+        test(`${argv.join(' ')}: pauses in order, with the session open throughout`, async () => {
+            const t = await start(argv);
+            try {
+                const first = await t.clock.next();
+                assert.equal(first.ms, 10000);
+                assert.deepEqual(t.launched(), ['web']);
+                assert.equal(t.h.closed, false);
+
+                first.release();
+                const second = await t.clock.next();
+                assert.equal(second.ms, 5000);
+                assert.deepEqual(t.launched(), ['web', 'api']);
+                assert.equal(t.h.closed, false);
+
+                second.release();
+                assert.equal(await t.running, 0);
+                assert.deepEqual(t.launched(), ['web', 'api', 'addon-client']);
+                assert.equal(t.h.closed, true);
+                assert.equal(t.signals.handlers.length, 0, 'the handler goes when the run does');
+                assert.match(t.h.stderr(), /started 3 configuration/);
+            } finally {
+                await t.cleanup();
+            }
+        });
+    }
+
+    test('the plan shows the pauses, and they are not counted as configurations', async () => {
+        const t = await start(['--preset', 'infra', 'back']);
+        try {
+            (await t.clock.next()).release();
+            await t.running;
+            assert.match(t.h.stderr(), /launching 2 configuration\(s\)/);
+            assert.match(t.h.stdout(), /web[^\n]*\n→ wait 10s after preset "infra"\naddon-client/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('a known failure in a paused preset: exit 1, no wait, the rest named as skipped', async () => {
+        const t = await start(['--preset', 'infra', 'api'], {
+            deps: {
+                callTool: (name, args) => {
+                    if (name === 'execute_run_configuration' && args.configurationName === 'web') {
+                        throw new McpToolError(name, 'refused');
+                    }
+                    return FIXTURE;
+                },
+            },
+        });
+        try {
+            assert.equal(await t.running, 1);
+            assert.deepEqual(t.clock.calls, []);
+            assert.deepEqual(t.launched(), ['web']);
+            const err = t.h.stderr();
+            assert.match(err, /started 0 of 2 configuration\(s\)/);
+            assert.match(err, /failed: web/);
+            assert.match(err, /skipped: api/);
+            assert.match(err, /preset "infra"/);
+            assert.equal(t.h.closed, true);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('Ctrl-C during the pause: 130, nothing more launched, the session closed', async () => {
+        const t = await start(['--preset', 'infra', 'api']);
+        try {
+            const pending = await t.clock.next();
+            t.signals.emit();
+            pending.release();
+            assert.equal(await t.running, 130);
+            await tick();
+            assert.deepEqual(t.launched(), ['web']);
+            assert.equal(t.h.closed, true);
+            assert.equal(t.signals.handlers.length, 0);
+            assert.match(t.h.stderr(), /not started: api/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('a default preset alone has nothing to wait for', async () => {
+        const t = await start([]);
+        try {
+            assert.equal(await t.running, 0);
+            assert.deepEqual(t.clock.calls, []);
+            assert.doesNotMatch(t.h.output(), /wait/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('a default preset plus a new name pauses before that name', async () => {
+        const t = await start(['api']);
+        try {
+            const pending = await t.clock.next();
+            assert.deepEqual(t.launched(), ['web']);
+            pending.release();
+            assert.equal(await t.running, 0);
+            assert.deepEqual(t.launched(), ['web', 'api']);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('no pause in the plan means no SIGINT handler at all', async () => {
+        const t = await start(['--preset', 'back']);
+        try {
+            assert.equal(t.signals.handlers.length, 0);
+            assert.equal(await t.running, 0);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('a dry run shows the pause and neither calls nor waits', async () => {
+        const t = await start(['--preset', 'infra', 'back', '--dry-run']);
+        try {
+            assert.equal(await t.running, 0);
+            assert.deepEqual(t.clock.calls, []);
+            assert.deepEqual(t.launched(), []);
+            const out = t.h.stdout();
+            assert.match(out, /web[^\n]*\n→ wait 10s after preset "infra"\naddon-client/);
+            assert.match(out, /→ execute_run_configuration {2}web\n→ wait 10s after preset "infra"\n→ execute_run_configuration {2}addon-client/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('an unknown name at the very end: nothing launched, nothing waited for', async () => {
+        const t = await start(['--preset', 'infra', 'nope-nope-nope']);
+        try {
+            assert.equal(await t.running, 1);
+            assert.deepEqual(t.launched(), []);
+            assert.deepEqual(t.clock.calls, []);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('two :debug entries across a pause get different ports', async () => {
+        const config = JSON.stringify({
+            version: 2,
+            presets: {
+                a: { entries: [{ name: 'web', mode: 'debug' }], waitAfterSeconds: 3 },
+                b: { entries: [{ name: 'api', mode: 'debug' }] },
+            },
+        });
+        const t = await start(['--preset', 'a', 'b', '--dry-run'], { config, idea: true });
+        try {
+            assert.equal(await t.running, 0);
+            const out = t.h.stdout();
+            assert.match(out, /127\.0\.0\.1:9229[^\n]*\n→ wait 3s after preset "a"\n[^\n]*127\.0\.0\.1:9230/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('custom entries keep their commands, with the pause between them', async () => {
+        const config = JSON.stringify({
+            version: 2,
+            presets: {
+                a: { entries: [{ name: 'seed', commands: ['echo one'] }], waitAfterSeconds: 3 },
+                b: { entries: [{ name: 'other', commands: ['echo two'] }] },
+            },
+        });
+        const t = await start(['--preset', 'a', 'b', '--dry-run'], { config });
+        try {
+            assert.equal(await t.running, 0);
+            assert.match(t.h.stdout(), /echo one\n→ wait 3s after preset "a"\n→ [^\n]*echo two/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('the real no-IDE path, dry: pause rows, and nothing opened or waited for', async () => {
+        const t = await start(['--preset', 'infra', 'back', '--dry-run', '--fallback=terminal'], {
+            idea: true,
+            realFallback: true,
+            deps: { port: null },
+        });
+        try {
+            assert.equal(await t.running, 0);
+            assert.deepEqual(t.clock.calls, []);
+            const out = t.h.stdout();
+            assert.match(out, /web[^\n]*\n→ wait 10s after preset "infra"\naddon-client/);
+            assert.match(out, /→ web[^\n]*\n→ wait 10s after preset "infra"\n→ addon-client/);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('the no-IDE hand-over carries the groups, the clock and the process', async () => {
+        const t = await start(['--preset', 'infra', 'back', '--fallback=terminal'], { deps: { port: null } });
+        try {
+            assert.equal(await t.running, 0);
+            const ctx = t.h.fellBack[0];
+            assert.deepEqual(ctx.presetGroups.map((g) => [g.name, g.waitAfterSeconds]), [['infra', 10], ['back', 0]]);
+            assert.equal(ctx.wait, t.clock.wait);
+            assert.equal(ctx.process, t.signals);
+            assert.equal(Object.hasOwn(ctx, 'presetEntries'), false);
+        } finally {
+            await t.cleanup();
+        }
+    });
+
+    test('a preset name with a control character cannot forge a line of the plan', async () => {
+        const config = JSON.stringify({
+            version: 2,
+            presets: { 'a\n→ wait 0s': { entries: [{ name: 'web' }], waitAfterSeconds: 2 }, b: { entries: [{ name: 'api' }] } },
+        });
+        const t = await start(['--preset', 'a\n→ wait 0s', 'b', '--dry-run'], { config });
+        try {
+            assert.equal(await t.running, 0);
+            assert.match(t.h.stdout(), /→ wait 2s after preset "a\\n→ wait 0s"/);
+        } finally {
+            await t.cleanup();
+        }
     });
 });

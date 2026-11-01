@@ -27,6 +27,7 @@ import {
 } from '../mcp/execute.js';
 import { isCustomPlanEntry } from '../resolve.js';
 import { customCommandLine } from './customCommands.js';
+import { insertWaitRows } from './schedule.js';
 
 /**
  * @typedef {import('../resolve.js').PlanEntry} PlanEntry
@@ -514,16 +515,16 @@ export function guessedCommands(calls) {
 
 /**
  * @param {McpCall[]} calls
+ * @param {import('./schedule.js').PresetBarrier[]} [barriers] - shown where they fall
  * @returns {string} one line per call, for --dry-run: what would actually be sent
  */
-export function formatExecutionPlan(calls) {
+export function formatExecutionPlan(calls, barriers = []) {
     if (calls.length === 0) return 'nothing to launch';
 
     const width = Math.max(...calls.map((call) => call.tool.length));
-    return calls
-        .map((call) => {
-            const payload = call.arguments.command ?? call.arguments.configurationName;
-            return `→ ${call.tool.padEnd(width)}  ${payload}`;
-        })
-        .join('\n');
+    const rows = calls.map((call) => {
+        const payload = call.arguments.command ?? call.arguments.configurationName;
+        return `→ ${call.tool.padEnd(width)}  ${payload}`;
+    });
+    return insertWaitRows(rows, barriers).join('\n');
 }

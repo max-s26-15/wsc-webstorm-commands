@@ -40,8 +40,7 @@ import { findTerminal, openTerminalTabs } from './terminalTabs.js';
 /**
  * @typedef {object} FallbackContext
  * @property {string} presetName
- * @property {import('../presets/store.js').PresetEntry[]} [presetEntries] - one pauseless group; for callers without groups
- * @property {import('../presets/store.js').PresetGroup[]} [presetGroups] - in the order typed
+ * @property {import('../presets/store.js').PresetGroup[]} presetGroups - in the order typed
  * @property {string[]} positionals - raw command-line tokens, still unsplit
  * @property {string} projectRoot
  * @property {number} debugPortBase
@@ -65,7 +64,7 @@ import { findTerminal, openTerminalTabs } from './terminalTabs.js';
  */
 export async function runTerminalFallback(ctx) {
     const { log, projectRoot } = ctx;
-    const groups = ctx.presetGroups ?? [{ name: ctx.presetName, entries: ctx.presetEntries ?? [], waitAfterSeconds: 0 }];
+    const groups = ctx.presetGroups;
 
     const configs = await (ctx.readConfigs ?? readIdeaRunConfigs)(projectRoot);
     log.debug(`${configs.length} run configurations read from ${DISK_SOURCE}`);
@@ -266,7 +265,7 @@ async function launch(tabs, barriers, ctx) {
     // Set only while a stage is being opened: what a rejection leaves in doubt.
     let opening = 0;
 
-    const interrupt = createInterruptScope(ctx.process);
+    const interrupt = barriers.length > 0 ? createInterruptScope(ctx.process) : null;
     let report;
     try {
         report = await runSchedule(tabs.length, barriers, {
@@ -278,7 +277,7 @@ async function launch(tabs, barriers, ctx) {
                 return { started: Array.from({ length: end - start }, (_, i) => start + i), failed: [] };
             },
             wait: ctx.wait,
-            signal: interrupt.signal,
+            signal: interrupt?.signal,
             log: { info: (line) => log.info(line) },
         });
     } catch (err) {
@@ -296,7 +295,7 @@ async function launch(tabs, barriers, ctx) {
         }
         throw err;
     } finally {
-        interrupt.dispose();
+        interrupt?.dispose();
     }
 
     if (report.cancelled) {

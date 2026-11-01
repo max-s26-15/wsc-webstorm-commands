@@ -33,6 +33,8 @@ import {
 import { announceCustomCommands } from './exec/customCommands.js';
 import { guessedCommandNote, ideaCommandResolver } from './exec/ideaCommands.js';
 import { warnBusyDebugPorts } from './exec/inspectorPorts.js';
+import { createInterruptScope } from './exec/interrupt.js';
+import { quotePresetName } from './exec/schedule.js';
 import { assertPosixTerminal } from './exec/terminalShell.js';
 import { readIdeaRunConfigs } from './fallback/ideaRunConfigs.js';
 import { runTerminalFallback } from './fallback/terminalFallback.js';
@@ -48,14 +50,14 @@ import {
     configPath,
     deletePreset,
     findProjectRoot,
-    getPreset,
+    getPresetGroup,
     hasPreset,
     isCustomEntry,
     listPresets,
     readPresets,
     writePresets,
 } from './presets/store.js';
-import { buildLaunchPlan, formatPlan, normalizeRunConfigs } from './resolve.js';
+import { buildScheduledLaunchPlan, formatPlan, normalizeRunConfigs } from './resolve.js';
 import { runConfigure } from './ui/configure.js';
 import {
     FALLBACK_MODES,
@@ -144,6 +146,8 @@ message goes to stderr, so \`wsc --list | grep dev\` sees configuration names an
  * @property {typeof runConfigure} [runConfigure]
  * @property {typeof readIdeaRunConfigs} [readIdeaRunConfigs]
  * @property {NodeJS.ReadStream} [stdin]
+ * @property {import('./exec/runSchedule.js').Wait} [wait] - the pause after a preset
+ * @property {{ on: Function, off: Function, kill?: Function }} [process] - where Ctrl-C is listened for
  */
 
 /**
@@ -305,11 +309,21 @@ async function ideToolNames(client, log) {
  *   log: ReturnType<typeof createLogger>,
  *   calls: import('./exec/planBuilder.js').McpCall[],
  *   connectAs?: (name: string) => Promise<import('./mcp/client.js').McpClient>,
+ *   barriers?: import('./exec/schedule.js').PresetBarrier[],
+ *   wait?: import('./exec/runSchedule.js').Wait,
+ *   process?: { on: Function, off: Function },
  * }} ctx
  * @returns {Promise<number>}
  */
 async function executePlan(plan, ctx) {
-    const { started, failed } = await runExecutionPlan(ctx.calls, ctx).catch((err) => {
+    const barriers = ctx.barriers ?? [];
+    const interrupt = barriers.length > 0 ? createInterruptScope(ctx.process) : null;
+
+    const { started, failed, skipped, blockedBy, cancelled } = await runExecutionPlan(ctx.calls, {
+        ...ctx,
+        barriers,
+        signal: interrupt?.signal,
+    }).catch((err) => {
         // KNOWN_ERRORS already keeps this from becoming a stack trace, but only here does
         // the CLI know enough to say what it means: the tabs that opened are unaffected,
         // and the run can simply be repeated for the rest.
@@ -321,7 +335,28 @@ async function executePlan(plan, ctx) {
             );
         }
         throw err;
-    });
+    }).finally(() => interrupt?.dispose());
+
+    /** @param {import('./exec/planBuilder.js').McpCall[]} list */
+    const names = (list) => list.map((call) => call.name).join(', ');
+    const failedPart = failed.length > 0 ? `; failed: ${names(failed.map(({ call }) => call))}` : '';
+
+    // Ahead of the rest, since it is what the user asked for: 130, whatever else went on.
+    if (cancelled) {
+        ctx.log.warn(
+            `stopped: ${started.length} of ${plan.length} started, and those tabs keep running${failedPart}` +
+                `${skipped.length > 0 ? `; not started: ${names(skipped)}` : ''}`,
+        );
+        return CANCELLED_EXIT_CODE;
+    }
+
+    if (blockedBy !== undefined) {
+        ctx.log.error(
+            `started ${started.length} of ${plan.length} configuration(s)${failedPart}; skipped: ${names(skipped)} ` +
+                `(an entry of preset ${quotePresetName(blockedBy)} failed, and they were waiting on it)`,
+        );
+        return 1;
+    }
 
     if (failed.length === 0) {
         ctx.log.info(`started ${started.length} configuration(s)`);
@@ -754,8 +789,9 @@ async function run(argv, deps) {
         }
     }
 
-    const presetEntries = presetNames.flatMap((name) => getPreset(config, name));
-    log.debug(`project ${projectRoot}, preset "${presetName}" (${presetEntries.length} entries)`);
+    const presetGroups = presetNames.map((name) => getPresetGroup(config, name));
+    const entryCount = presetGroups.reduce((count, group) => count + group.entries.length, 0);
+    log.debug(`project ${projectRoot}, preset "${presetName}" (${entryCount} entries)`);
 
     // ── Talk to the IDE ──────────────────────────────────────────────────────
     // --configure edits a preset; there is nothing a terminal could do for it.
@@ -777,13 +813,15 @@ async function run(argv, deps) {
         // guard further down: the fallback owns the other half of that promise.
         return await (deps.runTerminalFallback ?? runTerminalFallback)({
             presetName,
-            presetEntries,
+            presetGroups,
             positionals,
             projectRoot,
             debugPortBase,
             dryRun: Boolean(values['dry-run']),
             env,
             log,
+            wait: deps.wait,
+            process: deps.process,
         });
     }
 
@@ -815,7 +853,7 @@ async function run(argv, deps) {
             });
         }
 
-        const plan = buildLaunchPlan({ configs, preset: presetEntries, requests });
+        const { plan, barriers } = buildScheduledLaunchPlan({ configs, presets: presetGroups, requests });
         if (plan.length === 0) {
             throw new WscError(
                 `nothing to launch: preset "${presetName}" is empty and no configuration was named.\n` +
@@ -871,7 +909,7 @@ async function run(argv, deps) {
             ? `${target} + terminal`
             : target;
         log.info(`${values['dry-run'] ? 'would launch' : 'launching'} ${plan.length} configuration(s) via ${via}:`);
-        log.out(formatPlan(plan));
+        log.out(formatPlan(plan, barriers));
         // Ahead of every note and of the launch itself: the preset file is usually committed,
         // so what it is about to run should be visible, not merely obeyed.
         announceCustomCommands(plan, log);
@@ -895,7 +933,7 @@ async function run(argv, deps) {
         // every side effect, now that executePlan() really launches things: the two tests
         // named "--dry-run … execution seam" fail if it is ever moved or inlined.
         if (values['dry-run']) {
-            log.out(formatExecutionPlan(calls));
+            log.out(formatExecutionPlan(calls, barriers));
             return 0;
         }
 
@@ -905,6 +943,14 @@ async function run(argv, deps) {
         // session called by its configuration's name — see runExecutionPlan().
         const connectAs = (/** @type {string} */ name) =>
             (deps.connectMcp ?? connectMcp)(reached.port, { projectPath: projectRoot, clientName: name, log });
-        return (deps.executePlan ?? executePlan)(plan, { client, log, calls, connectAs });
+        return (deps.executePlan ?? executePlan)(plan, {
+            client,
+            log,
+            calls,
+            connectAs,
+            barriers,
+            wait: deps.wait,
+            process: deps.process,
+        });
     });
 }

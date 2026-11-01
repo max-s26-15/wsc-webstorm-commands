@@ -15,6 +15,15 @@ describe('createInterruptScope', () => {
         scope.dispose();
     });
 
+    test('after the first Ctrl-C the handler is gone, so a second one is the default kill', () => {
+        // The way out of a launch call the IDE is not answering, which an abort cannot interrupt.
+        const signals = fakeSignals();
+        const scope = createInterruptScope(signals);
+        signals.emit('SIGINT');
+        assert.equal(signals.handlers.length, 0);
+        scope.dispose();
+    });
+
     test('dispose removes the handler, and doing it twice is fine', () => {
         const signals = fakeSignals();
         const scope = createInterruptScope(signals);

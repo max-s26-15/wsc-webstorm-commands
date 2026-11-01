@@ -1174,7 +1174,7 @@ describe('runCli — unreachable IDE: retry and terminal fallback', () => {
         );
         const ctx = fellBack[0];
         assert.equal(ctx.presetName, 'dev');
-        assert.deepEqual(ctx.presetEntries, [{ name: 'web', mode: 'run' }]);
+        assert.deepEqual(ctx.presetGroups, [{ name: 'dev', entries: [{ name: 'web', mode: 'run' }], waitAfterSeconds: 0 }]);
         assert.equal(ctx.debugPortBase, 9300);
         assert.ok(ctx.projectRoot.length > 0);
 

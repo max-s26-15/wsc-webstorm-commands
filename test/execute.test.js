@@ -16,6 +16,7 @@ import {
     terminalCommandCall,
     terminalTabCall,
 } from '../src/mcp/execute.js';
+import { createControlledWait } from '../test-utils/controlled-wait.js';
 import { fakeSession, textResult } from '../test-utils/fake-session.js';
 
 /**
@@ -203,7 +204,7 @@ describe('runExecutionPlan — the happy path', () => {
         const { client, calls } = mockClient();
         const report = await runExecutionPlan([], { client });
         assert.deepEqual(calls, []);
-        assert.deepEqual(report, { started: [], failed: [] });
+        assert.deepEqual(report, { started: [], failed: [], skipped: [], cancelled: false });
     });
 });
 
@@ -561,5 +562,216 @@ describe('runExecutionPlan — a launch the IDE ran but the command rejected', (
         assert.deepEqual(report.started.map((c) => c.name), ['web'], 'the rest of the plan still runs');
         assert.deepEqual(report.failed.map(({ call }) => call.name), ['api']);
         assert.ok(log.lines.some((line) => line.includes('command not found')));
+    });
+});
+
+describe('runExecutionPlan — pauses between presets', { timeout: 5000 }, () => {
+    const barrier = (after, presetName, waitAfterSeconds, members) => ({ after, presetName, waitAfterSeconds, members });
+    const namedTerm = (name) => ({ ...termCall(name, `run ${name}`), tabName: name });
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+    /** @param {string} [failing] - the configuration the IDE refuses */
+    const setup = (failing) => {
+        const log = mockLog();
+        const clock = createControlledWait();
+        const { client, calls } = mockClient((_tool, args) => {
+            if (failing !== undefined && args.configurationName === failing) throw new McpToolError(_tool, 'refused');
+            return 'ok';
+        });
+        return { log, clock, client, calls, launched: () => calls.map(({ args }) => args.configurationName) };
+    };
+
+    test('nothing behind the pause is called before it ends', async () => {
+        const h = setup();
+        const running = runExecutionPlan([runCall('db'), runCall('web')], {
+            client: h.client,
+            log: h.log,
+            barriers: [barrier(1, 'infra', 10, [0])],
+            wait: h.clock.wait,
+        });
+
+        const pending = await h.clock.next();
+        assert.equal(pending.ms, 10000);
+        assert.deepEqual(h.launched(), ['db']);
+
+        pending.release();
+        const report = await running;
+        assert.deepEqual(h.launched(), ['db', 'web']);
+        assert.deepEqual(report.started.map((c) => c.name), ['db', 'web']);
+        assert.deepEqual(report.skipped, []);
+        assert.equal(report.cancelled, false);
+        assert.ok(h.log.lines.includes('info: waiting 10s after preset "infra"'));
+    });
+
+    test('the last call has answered and its named session closed before the pause begins', async () => {
+        const h = setup();
+        const closed = [];
+        /** @type {() => void} */
+        let answer = () => {};
+        const connectAs = async (name) => ({
+            callTool: () => new Promise((resolve) => { answer = () => resolve('ok'); }),
+            close: async () => { closed.push(name); },
+        });
+        const running = runExecutionPlan([namedTerm('db'), runCall('web')], {
+            client: h.client,
+            log: h.log,
+            connectAs,
+            barriers: [barrier(1, 'infra', 1, [0])],
+            wait: h.clock.wait,
+        });
+
+        await tick();
+        assert.deepEqual(h.clock.calls, [], 'the call is still in flight');
+        answer();
+        const pending = await h.clock.next();
+        assert.deepEqual(closed, ['db'], 'closed by the time the pause starts');
+        pending.release();
+        await running;
+    });
+
+    test('a bounded terminal call that times out counts as started, and still gets its pause', async () => {
+        const h = setup();
+        const timedOut = Object.assign(new Error('timed out'), { code: -32001 });
+        const connectAs = async () => ({
+            callTool: async () => { throw timedOut; },
+            close: async () => {},
+        });
+        const running = runExecutionPlan(
+            [{ ...namedTerm('db'), timeoutMs: 5 }, runCall('web')],
+            { client: h.client, log: h.log, connectAs, barriers: [barrier(1, 'infra', 2, [0])], wait: h.clock.wait },
+        );
+        (await h.clock.next()).release();
+        const report = await running;
+        assert.deepEqual(report.started.map((c) => c.name), ['db', 'web']);
+    });
+
+    test('a failed member lets the rest of its preset try, then blocks what is behind it', async () => {
+        const h = setup('a');
+        const report = await runExecutionPlan([runCall('a'), runCall('b'), runCall('c')], {
+            client: h.client,
+            log: h.log,
+            barriers: [barrier(2, 'infra', 10, [0, 1])],
+            wait: h.clock.wait,
+        });
+        assert.deepEqual(h.launched(), ['a', 'b']);
+        assert.deepEqual(report.started.map((c) => c.name), ['b']);
+        assert.deepEqual(report.failed.map(({ call, reason }) => [call.name, reason]), [['a', 'refused']]);
+        assert.deepEqual(report.skipped.map((c) => c.name), ['c']);
+        assert.equal(report.blockedBy, 'infra');
+        assert.deepEqual(h.clock.calls, []);
+    });
+
+    test('a shared member that failed in an earlier pauseless preset blocks at the later barrier', async () => {
+        const h = setup('a');
+        const report = await runExecutionPlan([runCall('a'), runCall('b'), runCall('c')], {
+            client: h.client,
+            log: h.log,
+            barriers: [barrier(2, 'second', 10, [0, 1])],
+            wait: h.clock.wait,
+        });
+        assert.equal(report.blockedBy, 'second');
+        assert.deepEqual(report.skipped.map((c) => c.name), ['c']);
+    });
+
+    test('without a pause a failure carries on, as it always has', async () => {
+        const h = setup('a');
+        const report = await runExecutionPlan([runCall('a'), runCall('b')], { client: h.client, log: h.log });
+        assert.deepEqual(h.launched(), ['a', 'b']);
+        assert.deepEqual(report.skipped, []);
+        assert.equal(report.blockedBy, undefined);
+    });
+
+    test('a named session refused before the pause is not asked for again after it', async () => {
+        const h = setup();
+        let attempts = 0;
+        const connectAs = async () => {
+            attempts++;
+            throw new Error('no');
+        };
+        const running = runExecutionPlan([namedTerm('a'), namedTerm('b'), namedTerm('c')], {
+            client: h.client,
+            log: h.log,
+            connectAs,
+            barriers: [barrier(1, 'infra', 1, [0])],
+            wait: h.clock.wait,
+        });
+        (await h.clock.next()).release();
+        await running;
+        assert.equal(attempts, 1);
+        assert.equal(h.log.lines.filter((line) => line.startsWith('warn: could not open a session')).length, 1);
+    });
+
+    test('Ctrl-C during the pause: cancelled, the rest skipped, a late release calls nothing', async () => {
+        const h = setup();
+        const controller = new AbortController();
+        const running = runExecutionPlan([runCall('a'), runCall('b')], {
+            client: h.client,
+            log: h.log,
+            barriers: [barrier(1, 'infra', 1, [0])],
+            wait: h.clock.wait,
+            signal: controller.signal,
+        });
+        const pending = await h.clock.next();
+        controller.abort();
+        pending.release();
+        const report = await running;
+        assert.equal(report.cancelled, true);
+        assert.deepEqual(report.skipped.map((c) => c.name), ['b']);
+        assert.deepEqual(h.launched(), ['a']);
+    });
+
+    test('Ctrl-C while a named session opens: it is closed, and its tool never called', async () => {
+        const h = setup();
+        const controller = new AbortController();
+        const closed = [];
+        let toolCalled = false;
+        const report = await runExecutionPlan([namedTerm('a'), namedTerm('b')], {
+            client: h.client,
+            log: h.log,
+            signal: controller.signal,
+            connectAs: async (name) => {
+                controller.abort();
+                return {
+                    callTool: async () => { toolCalled = true; },
+                    close: async () => { closed.push(name); },
+                };
+            },
+        });
+        assert.equal(toolCalled, false);
+        assert.deepEqual(closed, ['a']);
+        assert.equal(report.cancelled, true);
+        assert.deepEqual(report.skipped.map((c) => c.name), ['a', 'b']);
+    });
+
+    test('a transport error still aborts, naming what started in an earlier stage', async () => {
+        const boom = Object.assign(new Error('gone'), { name: 'McpError' });
+        const h = setup();
+        const log = mockLog();
+        const { client } = mockClient((_tool, args) => {
+            if (args.configurationName === 'b') throw boom;
+            return 'ok';
+        });
+        const running = runExecutionPlan([runCall('a'), runCall('b'), runCall('c')], {
+            client,
+            log,
+            barriers: [barrier(1, 'infra', 1, [0])],
+            wait: h.clock.wait,
+        });
+        (await h.clock.next()).release();
+        await assert.rejects(running, (err) => err === boom);
+        assert.ok(log.lines.includes('warn: already started: a'));
+    });
+
+    test('timer details never reach the tool arguments', async () => {
+        const h = setup();
+        const running = runExecutionPlan([runCall('a'), runCall('b')], {
+            client: h.client,
+            log: h.log,
+            barriers: [barrier(1, 'infra', 1, [0])],
+            wait: h.clock.wait,
+        });
+        (await h.clock.next()).release();
+        await running;
+        assert.deepEqual(h.calls[0].args, runCall('a').arguments);
     });
 });
