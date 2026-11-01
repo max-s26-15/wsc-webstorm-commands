@@ -9,7 +9,8 @@
 import { input, select } from '@inquirer/prompts';
 
 import { DEFAULT_MODE, MODES } from '../modes.js';
-import { getPreset, setPreset, writePresets } from '../presets/store.js';
+import { quotePresetName } from '../exec/schedule.js';
+import { getPreset, getPresetGroup, setPreset, setPresetWaitAfter, writePresets } from '../presets/store.js';
 import {
     addCustomEntry,
     applyAnswersToPreset,
@@ -22,19 +23,22 @@ import {
     entryEditChoices,
     fitLine,
     focusAfter,
+    listExtraLines,
     pageSizeFor,
+    pauseInputValue,
     pendingModeQuestions,
     screenChoices,
     splitSelection,
     takenNames,
     validateCustomCommand,
     validateCustomName,
+    validatePauseInput,
 } from './configureLogic.js';
 import { editableCheckbox } from './editableCheckbox.js';
 import { CANCELLED_EXIT_CODE, isCancelled } from './promptCancel.js';
 
 /**
- * Passed to every prompt opened from the list with `e` or `n`: each one erases itself when
+ * Passed to every prompt opened from the list with `e`, `n` or `t`: each one erases itself when
  * answered, so the list is drawn again where it was instead of below a trail of menus.
  *
  * Each of those prompts also takes an empty answer as "back, nothing changed" — Ctrl-C is
@@ -85,6 +89,9 @@ export async function runConfigure(opts) {
     }
 
     const before = getPreset(config, presetName);
+    // Apart from `Screen`, which is about the rows: this belongs to the preset, not to any of them.
+    const beforeWait = getPresetGroup(config, presetName).waitAfterSeconds;
+    let waitAfterSeconds = beforeWait;
     const { choices, stale } = buildInitialSelection(configs, before);
 
     // Warn before any early exit: an IDE reporting nothing at all is precisely when a
@@ -108,6 +115,7 @@ export async function runConfigure(opts) {
     // Every list and question opened from the list has to fit the terminal, or erasing it to
     // draw the next one cannot reach what scrolled off: see pageSizeFor() and fitLine().
     const pageSize = pageSizeFor(stdout.rows);
+    const listPageSize = pageSizeFor(stdout.rows, listExtraLines(stdout.columns));
     /** @param {string} text */
     const fit = (text) => fitLine(text, stdout.columns);
     /** @type {Screen} */
@@ -133,11 +141,17 @@ export async function runConfigure(opts) {
                 message: fit(`Configurations to launch by default (preset "${presetName}")`),
                 choices: screenChoices(choices, screen),
                 active,
-                pageSize,
+                pageSize: listPageSize,
+                waitAfterSeconds,
+                columns: stdout.columns,
             });
             screen = { ...screen, checked: new Set(result.checked) };
             active = result.active;
             if (result.action === 'submit') break;
+            if (result.action === 'pause') {
+                waitAfterSeconds = await askPause({ prompts, presetName, current: waitAfterSeconds, fit });
+                continue;
+            }
 
             // `focus` is where the cursor goes when the list comes back: the entry just touched.
             const { screen: next, focus } = result.action === 'new'
@@ -171,18 +185,46 @@ export async function runConfigure(opts) {
     const after = applyAnswersToPreset(selection, modes, before, added, screen.edits);
     const diff = diffPreset(before, after, screen.edits);
 
-    if (diff.unchanged) {
+    const waitChanged = waitAfterSeconds !== beforeWait;
+
+    if (diff.unchanged && !waitChanged) {
         log.info(`preset "${presetName}" unchanged`);
         return 0;
     }
 
-    const filePath = await writePresets(projectRoot, setPreset(config, presetName, after));
+    const updated = setPreset(config, presetName, after);
+    const filePath = await writePresets(
+        projectRoot,
+        waitChanged ? setPresetWaitAfter(updated, presetName, waitAfterSeconds) : updated,
+    );
 
     log.info(`saved preset "${presetName}" to ${filePath}`);
     for (const name of diff.added) log.info(`  + ${name}`);
     for (const name of diff.removed) log.info(`  - ${name}`);
     for (const change of diff.changed) log.info(`  ~ ${change}`);
+    if (waitChanged) log.info(`  ~ pause after preset: ${beforeWait}s → ${waitAfterSeconds}s`);
     return 0;
+}
+
+/**
+ * `t` in the list: ask how long to pause after this preset. An empty answer keeps the value.
+ *
+ * @param {{ prompts: Prompts, presetName: string, current: number, fit: (text: string) => string }} opts
+ * @returns {Promise<number>}
+ */
+async function askPause({ prompts, presetName, current, fit }) {
+    const answer = await prompts.input(
+        {
+            message: [
+                fit(`Pause after preset ${quotePresetName(presetName)}, in seconds`),
+                fit('  0 disables; empty keeps current'),
+            ].join('\n'),
+            default: String(current),
+            validate: validatePauseInput,
+        },
+        IN_PLACE,
+    );
+    return pauseInputValue(answer, current);
 }
 
 /**

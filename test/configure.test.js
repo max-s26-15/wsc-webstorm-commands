@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
 import { createLogger } from '../src/log.js';
-import { configPath, emptyConfig, readPresets } from '../src/presets/store.js';
+import { configPath, emptyConfig, getPresetGroup, readPresets, setPresetWaitAfter } from '../src/presets/store.js';
 import { normalizeRunConfigs } from '../src/resolve.js';
 import { runConfigure } from '../src/ui/configure.js';
 import { customChoiceValue, newChoiceValue } from '../src/ui/configureLogic.js';
@@ -21,7 +21,7 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
  * @param {string} opts.dir
  * @param {string[]} [opts.checked] - what the list is submitted with; by default, whatever is
  *   checked when Enter is pressed
- * @param {Array<{ action: 'edit' | 'new', value?: string, checked?: string[] }>} [opts.steps] -
+ * @param {Array<{ action: 'edit' | 'new' | 'pause', value?: string, checked?: string[] }>} [opts.steps] -
  *   `e` and `n` pressed in the list, in order, before the final Enter; `checked` is what the
  *   list held at that moment (by default, what it was drawn with)
  * @param {Array<import('../src/modes.js').LaunchMode>} [opts.modes] - answers to the mode questions, in order
@@ -38,6 +38,7 @@ const CONFIGS = normalizeRunConfigs(require('./fixtures/run-configurations.json'
  * @param {boolean} [opts.tty]
  * @param {number} [opts.rows] - the terminal's height, as stdout reports it
  * @param {number} [opts.columns] - the terminal's width, as stdout reports it
+ * @param {string} [opts.presetName]
  */
 async function configure(opts) {
     const stdout = fakeStream(opts.tty ?? true);
@@ -65,7 +66,15 @@ async function configure(opts) {
     const prompts = {
         // Answers like the real list: what it was left holding, how it was left, and where.
         checkbox: async (config) => {
-            asked.push({ type: 'checkbox', choices: config.choices, message: config.message, active: config.active, pageSize: config.pageSize });
+            asked.push({
+                type: 'checkbox',
+                choices: config.choices,
+                message: config.message,
+                active: config.active,
+                pageSize: config.pageSize,
+                waitAfterSeconds: config.waitAfterSeconds,
+                columns: config.columns,
+            });
             if (opts.throws) throw opts.throws;
             const current = config.choices.filter((c) => c.checked).map((c) => c.value);
             const step = steps.shift();
@@ -117,7 +126,7 @@ async function configure(opts) {
     const code = await runConfigure({
         configs: opts.configs ?? CONFIGS,
         config: opts.config ?? emptyConfig(),
-        presetName: 'default',
+        presetName: opts.presetName ?? 'default',
         projectRoot: opts.dir,
         log: createLogger({ stdout, stderr, env: { NO_COLOR: '1' } }),
         prompts,
@@ -774,7 +783,7 @@ describe('runConfigure — editing custom commands from the list', () => {
         const { dir, cleanup } = await tmpProject();
         try {
             const { asked, pageSizes } = await edit({ dir, rows: 12, menus: ['1. npm i'] });
-            assert.ok(asked.every((a) => a.type !== 'checkbox' || a.pageSize === 8));
+            assert.ok(asked.every((a) => a.type !== 'checkbox' || a.pageSize === 7));
             assert.deepEqual(pageSizes, [8, 8, 8]);
         } finally {
             await cleanup();
@@ -1053,6 +1062,204 @@ describe('runConfigure — editing custom commands from the list', () => {
             assert.equal(code, 130);
             assert.match(output, /cancelled; nothing was saved/);
             assert.deepEqual((await readPresets(dir)).presets, {});
+        } finally {
+            await cleanup();
+        }
+    });
+});
+
+describe('runConfigure — the pause after the preset', () => {
+    const PAUSE = { action: 'pause' };
+    const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i'] };
+    const entries = (extra = {}) => ({ ...emptyConfig(), presets: { default: { entries: [{ name: 'web', mode: 'run' }, seed], ...extra } } });
+
+    test('pause-only edit is saved', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { code, asked, output, inputConfigs } = await configure({ dir, config: entries(), steps: [PAUSE], inputs: ['10'] });
+
+            assert.equal(code, 0);
+            assert.equal(getPresetGroup(await readPresets(dir)).waitAfterSeconds, 10);
+            assert.match(output, /^ {2}~ pause after preset: 0s → 10s$/m);
+            assert.deepEqual(asked.filter((a) => a.type === 'checkbox').map((a) => a.waitAfterSeconds), [0, 10]);
+            assert.match(inputConfigs[0].message, /Pause after preset "default", in seconds/);
+            assert.match(inputConfigs[0].message, /0 disables; empty keeps current/);
+            assert.equal(inputConfigs[0].default, '0');
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a pause can be turned off, and the field goes away', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const config = entries({ waitAfterSeconds: 7, note: 'kept' });
+            const { output, inputConfigs } = await configure({ dir, config, steps: [PAUSE], inputs: ['0'] });
+
+            const written = JSON.parse(await fs.readFile(configPath(dir), 'utf8'));
+            assert.equal(Object.hasOwn(written.presets.default, 'waitAfterSeconds'), false);
+            assert.equal(written.presets.default.note, 'kept');
+            assert.match(output, /~ pause after preset: 7s → 0s/);
+            assert.equal(inputConfigs[0].default, '7');
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('empty pause answer preserves original bytes', async () => {
+        const text = '{"version":1,"presets":{"default":[{"name":"web"}]}}\n';
+        const { dir, cleanup } = await tmpProject(text);
+        try {
+            const { code, output } = await configure({ dir, config: await readPresets(dir), steps: [PAUSE], inputs: [''] });
+
+            assert.equal(code, 0);
+            assert.match(output, /unchanged/);
+            assert.equal(await fs.readFile(configPath(dir), 'utf8'), text);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('changing pause back makes no write', async () => {
+        const text = '{"version":1,"presets":{"default":[{"name":"web"}]}}\n';
+        const { dir, cleanup } = await tmpProject(text);
+        try {
+            await configure({ dir, config: await readPresets(dir), steps: [PAUSE, PAUSE], inputs: ['10', '0'] });
+            assert.equal(await fs.readFile(configPath(dir), 'utf8'), text);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('Ctrl-C after pause edit saves nothing', async () => {
+        const text = '{"version":1,"presets":{"default":[{"name":"web"}]}}\n';
+        const { dir, cleanup } = await tmpProject(text);
+        try {
+            const exit = Object.assign(new Error('x'), { name: 'ExitPromptError' });
+            const config = await readPresets(dir);
+            const { code } = await configure({ dir, config, steps: [PAUSE], inputs: ['10'], modes: [], throwsOnSelect: exit, checked: ['web', 'api'] });
+
+            assert.equal(code, 130);
+            assert.equal(await fs.readFile(configPath(dir), 'utf8'), text);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('Ctrl-C in the pause question itself saves nothing', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const exit = Object.assign(new Error('x'), { name: 'ExitPromptError' });
+            const { code } = await configure({ dir, steps: [PAUSE], throwsOnInput: exit });
+
+            assert.equal(code, 130);
+            await assert.rejects(fs.access(configPath(dir)));
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a refused answer is asked again, and is not what gets saved', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { rejected } = await configure({ dir, config: entries(), steps: [PAUSE], inputs: ['1.5', '86401', '3'] });
+
+            assert.equal(rejected.length, 2);
+            assert.equal(getPresetGroup(await readPresets(dir)).waitAfterSeconds, 3);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('pause edit retains custom draft and active row', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const value = customChoiceValue(1);
+            const { asked } = await configure({
+                dir,
+                config: entries(),
+                steps: [{ action: 'edit', value }, PAUSE],
+                menus: ['Name: seed db', 'Done'],
+                inputs: ['seed renamed', '4'],
+            });
+
+            const lists = asked.filter((a) => a.type === 'checkbox');
+            const row = lists[1].choices.findIndex((choice) => choice.value === value);
+            assert.equal(lists[1].active, row);
+            assert.equal(lists[2].active, row, 'the cursor stays where it was');
+            assert.deepEqual(lists[2].choices.map((c) => c.checked), lists[1].choices.map((c) => c.checked));
+
+            const group = getPresetGroup(await readPresets(dir));
+            assert.equal(group.waitAfterSeconds, 4);
+            assert.deepEqual(group.entries.map((entry) => entry.name), ['web', 'seed renamed']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('pause keeps what the list had unchecked', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            await configure({ dir, config: entries(), steps: [{ ...PAUSE, checked: [customChoiceValue(1)] }], inputs: ['2'] });
+            assert.deepEqual(getPresetGroup(await readPresets(dir)).entries.map((entry) => entry.name), ['seed db']);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('pause works with empty catalogue', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { code } = await configure({ dir, configs: [], steps: [PAUSE], inputs: ['6'] });
+
+            assert.equal(code, 0);
+            assert.equal(getPresetGroup(await readPresets(dir)).waitAfterSeconds, 6);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a pause and a change of entries land in one write, with both in the summary', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const config = setPresetWaitAfter(entries(), 'default', 1);
+            const { output } = await configure({ dir, config, steps: [PAUSE], inputs: ['2'], checked: ['web'] });
+
+            const group = getPresetGroup(await readPresets(dir));
+            assert.equal(group.waitAfterSeconds, 2);
+            assert.deepEqual(group.entries.map((entry) => entry.name), ['web']);
+            assert.match(output, /- seed db/);
+            assert.match(output, /~ pause after preset: 1s → 2s/);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('the list budgets its extra lines; other menus keep theirs', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { asked, pageSizes } = await configure({
+                dir,
+                config: entries(),
+                rows: 20,
+                columns: 60,
+                steps: [{ action: 'edit', value: customChoiceValue(1) }],
+                menus: ['Done'],
+            });
+
+            assert.ok(asked[0].pageSize < 16, `list: ${asked[0].pageSize}`);
+            assert.equal(asked[0].columns, 60);
+            assert.deepEqual(pageSizes, [16]);
+        } finally {
+            await cleanup();
+        }
+    });
+
+    test('a long preset name cannot make the question wrap', async () => {
+        const { dir, cleanup } = await tmpProject();
+        try {
+            const { inputConfigs } = await configure({ dir, columns: 40, steps: [PAUSE], inputs: [''] , presetName: 'x'.repeat(100) });
+            for (const line of inputConfigs[0].message.split('\n')) assert.ok(line.length <= 40, line);
         } finally {
             await cleanup();
         }

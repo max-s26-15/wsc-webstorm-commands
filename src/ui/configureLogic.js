@@ -8,7 +8,8 @@
 
 import { customCommandLine } from '../exec/customCommands.js';
 import { DEFAULT_MODE } from '../modes.js';
-import { CONTROL_CHARACTERS, isCustomEntry } from '../presets/store.js';
+import { CONTROL_CHARACTERS, MAX_WAIT_AFTER_SECONDS, isCustomEntry } from '../presets/store.js';
+import { listKeyRows, listKeys } from './checkboxKeys.js';
 
 // Mode assigned to a configuration the user checked but was never asked about.
 export { DEFAULT_MODE };
@@ -557,11 +558,65 @@ const PAGE_CHROME = 4;
  * already scrolled off the top. So a list taller than the terminal would leave stale copies.
  *
  * @param {number | undefined} rows - `stdout.rows`; unknown means "assume room"
+ * @param {number} [extraLines] - what this list draws beyond PAGE_CHROME
  * @returns {number}
  */
-export function pageSizeFor(rows) {
+export function pageSizeFor(rows, extraLines = 0) {
     if (rows === undefined) return PAGE_SIZE;
-    return Math.max(1, Math.min(PAGE_SIZE, rows - PAGE_CHROME));
+    return Math.max(1, Math.min(PAGE_SIZE, rows - PAGE_CHROME - extraLines));
+}
+
+/**
+ * What the `--configure` list draws beyond PAGE_CHROME: the pause line, and any key row past
+ * the two PAGE_CHROME already counts. Sized for the longest key line (the one with `e`), since
+ * the cursor can reach it without the list being sized again.
+ *
+ * @param {number | undefined} columns - `stdout.columns`
+ * @returns {number}
+ */
+export function listExtraLines(columns) {
+    return 1 + Math.max(0, listKeyRows(listKeys(true), columns).length - 2);
+}
+
+/**
+ * The line under the list.
+ *
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function pauseStatusLine(seconds) {
+    return `Pause after this preset: ${seconds} s${seconds === 0 ? ' (off)' : ''}`;
+}
+
+/**
+ * Whether a typed pause can be used. Digits only, so `1e2` and `0x10` (which `Number()` would
+ * take) are refused along with the rest; an empty answer means "keep it", like every question
+ * opened from the list.
+ *
+ * @param {string} text
+ * @returns {true | string} `true`, or what to show in the prompt
+ */
+export function validatePauseInput(text) {
+    const typed = text.trim();
+    if (typed === '') return true;
+    return /^[0-9]+$/.test(typed) && Number(typed) <= MAX_WAIT_AFTER_SECONDS
+        ? true
+        : `Enter a whole number of seconds from 0 to ${MAX_WAIT_AFTER_SECONDS}`;
+}
+
+/**
+ * The pause an answer leaves the preset with.
+ *
+ * @param {string} text - accepted by validatePauseInput()
+ * @param {number} current
+ * @returns {number}
+ * @throws {RangeError} for an answer validatePauseInput() refuses, rather than yield NaN
+ */
+export function pauseInputValue(text, current) {
+    const verdict = validatePauseInput(text);
+    if (verdict !== true) throw new RangeError(verdict);
+    const typed = text.trim();
+    return typed === '' ? current : Number(typed);
 }
 
 /**

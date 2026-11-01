@@ -20,7 +20,11 @@ import {
     fitLine,
     focusAfter,
     newChoiceValue,
+    listExtraLines,
     pageSizeFor,
+    pauseInputValue,
+    pauseStatusLine,
+    validatePauseInput,
     pendingModeQuestions,
     screenChoices,
     splitSelection,
@@ -798,5 +802,47 @@ describe('fitLine — a question that cannot wrap', () => {
         assert.equal(line.length, 37);
         assert.ok(line.endsWith('…'));
         assert.ok(line.startsWith('Command 1: xxx'));
+    });
+});
+
+describe('the pause question', () => {
+    test('an empty answer keeps the current value, spaces are trimmed', () => {
+        assert.equal(pauseInputValue('', 10), 10);
+        assert.equal(pauseInputValue('   ', 10), 10);
+        assert.equal(pauseInputValue(' 0 ', 10), 0);
+        assert.equal(pauseInputValue('86400', 0), 86400);
+    });
+
+    test('what is not a whole number from 0 to 86400 is refused in the prompt', () => {
+        for (const text of ['-1', '1.5', '1e2', '86401', 'abc', '0x10', '٣', '99999999999999999999']) {
+            assert.equal(typeof validatePauseInput(text), 'string', text);
+        }
+        for (const text of ['', '  ', '0', ' 5 ', '86400']) assert.equal(validatePauseInput(text), true, text);
+    });
+
+    test('pauseInputValue throws on what validation refuses, rather than yield NaN', () => {
+        for (const text of ['-1', '1.5', '1e2', '86401', 'abc']) {
+            assert.throws(() => pauseInputValue(text, 10), RangeError, text);
+        }
+    });
+
+    test('the status line says when the pause is off', () => {
+        assert.equal(pauseStatusLine(0), 'Pause after this preset: 0 s (off)');
+        assert.equal(pauseStatusLine(10), 'Pause after this preset: 10 s');
+    });
+});
+
+describe('pageSizeFor — with the list\'s extra lines', () => {
+    test('extra lines come out of the list, and the default budget is unchanged', () => {
+        assert.equal(pageSizeFor(14), 10);
+        assert.equal(pageSizeFor(14, 2), 8);
+        assert.equal(pageSizeFor(undefined, 5), 20);
+        assert.equal(pageSizeFor(3, 5), 1);
+    });
+
+    test('the list budgets the pause line and every key row past the two already budgeted', () => {
+        assert.equal(listExtraLines(undefined), 1);
+        assert.equal(listExtraLines(200), 1);
+        assert.ok(listExtraLines(30) > 1);
     });
 });

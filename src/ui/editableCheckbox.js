@@ -1,13 +1,13 @@
 /**
  * The `--configure` list: `@inquirer/prompts`' checkbox, plus `e` (edit the custom command
- * under the cursor) and `n` (add one).
+ * under the cursor), `n` (add one) and `t` (the pause after the preset).
  *
  * The stock checkbox takes no key of ours, so this draws the list itself on
  * `@inquirer/core`, the library that checkbox is built on, and looks the same. Every
  * decision a key makes is in checkboxKeys.js, which is unit-tested; what is left here is
  * rendering, verified by hand through a pty like the other prompts.
  *
- * `e` and `n` *leave* the list: the prompt settles with what it was holding, the caller
+ * `e`, `n` and `t` *leave* the list: the prompt settles with what it was holding, the caller
  * runs its menu and draws the list again from that state. Leaving erases the list from the
  * terminal (and the caller's menus erase themselves), so the user sees one list changing
  * in place; only the final Enter leaves the usual `✔ question answer` line behind.
@@ -16,7 +16,8 @@ import { createPrompt, makeTheme, useKeypress, usePagination, usePrefix, useStat
 import figures from '@inquirer/figures';
 import { styleText } from 'node:util';
 
-import { pressKey } from './checkboxKeys.js';
+import { listKeyRows, listKeys, pressKey } from './checkboxKeys.js';
+import { fitLine, pauseStatusLine } from './configureLogic.js';
 
 /**
  * `cursorHide` from `@inquirer/ansi`, which the stock checkbox ends its render with. Spelled
@@ -28,7 +29,7 @@ const CURSOR_HIDE = '\u001b[?25l';
 /**
  * @typedef {import('./checkboxKeys.js').Item} Item
  * @typedef {{
- *   action: 'submit' | 'edit' | 'new',
+ *   action: 'submit' | 'edit' | 'new' | 'pause',
  *   value?: string,
  *   checked: string[],
  *   active: number,
@@ -38,6 +39,8 @@ const CURSOR_HIDE = '\u001b[?25l';
  *   choices: Item[],
  *   active?: number,
  *   pageSize?: number,
+ *   waitAfterSeconds?: number,
+ *   columns?: number,
  * }} ListConfig
  */
 
@@ -101,22 +104,21 @@ const view = createPrompt(
             return [prefix, message, theme.style.answer(answer)].filter(Boolean).join(' ');
         }
 
-        /** @type {[string, string][]} */
-        const keys = [['↑↓', 'navigate'], ['space', 'select']];
-        if (state.items[state.active]?.editable) keys.push(['e', 'edit']);
-        keys.push(['n', 'new command'], ['a', 'all'], ['i', 'invert'], ['⏎', 'submit']);
+        const keyRows = listKeyRows(listKeys(Boolean(state.items[state.active]?.editable)), config.columns)
+            .map((row) => helpLine(row, theme.style.help));
+        const pause = theme.style.help(fitLine(pauseStatusLine(config.waitAfterSeconds ?? 0), config.columns));
 
         const body = state.items.length > 0 ? page : theme.style.help('  (empty — press n to add a custom command)');
-        return `${[`${prefix} ${message}`, body, ' ', helpLine(keys, theme.style.help)].join('\n')}${CURSOR_HIDE}`;
+        return `${[`${prefix} ${message}`, body, ' ', pause, ...keyRows].join('\n')}${CURSOR_HIDE}`;
     },
 );
 
 /**
- * Draw the list until Enter, `e` or `n`.
+ * Draw the list until Enter, `e`, `n` or `t`.
  *
  * `@inquirer/core` reads `clearPromptOnDone` off the context only once the prompt has
  * settled, so the context is created here and flipped by the view when it leaves through
- * `e` or `n` — the one moment that knows whether the list should stay on screen.
+ * `e`, `n` or `t` — the one moment that knows whether the list should stay on screen.
  *
  * @param {ListConfig} config
  * @param {Parameters<typeof view>[1]} [context]
