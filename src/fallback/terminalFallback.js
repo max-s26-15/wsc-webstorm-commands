@@ -18,9 +18,13 @@
 import { UsageError, parseRequests } from '../args.js';
 import { announceCustomCommands, customCommandLine } from '../exec/customCommands.js';
 import { findBusyPorts, warnBusyDebugPorts } from '../exec/inspectorPorts.js';
+import { createInterruptScope } from '../exec/interrupt.js';
 import { DEBUG_HOST, DEBUG_PORT_BASE, MAX_PORT, debugNote } from '../exec/planBuilder.js';
+import { runSchedule } from '../exec/runSchedule.js';
+import { insertWaitRows } from '../exec/schedule.js';
 import { isCustomEntry } from '../presets/store.js';
-import { buildLaunchPlan, formatPlan, isCustomPlanEntry } from '../resolve.js';
+import { buildScheduledLaunchPlan, formatPlan, isCustomPlanEntry } from '../resolve.js';
+import { CANCELLED_EXIT_CODE } from '../ui/promptCancel.js';
 import { FallbackError } from './errors.js';
 import { DISK_SOURCE, buildFallbackCommand, readIdeaRunConfigs } from './ideaRunConfigs.js';
 import { runSingleTabPool } from './singleTabPool.js';
@@ -36,7 +40,8 @@ import { findTerminal, openTerminalTabs } from './terminalTabs.js';
 /**
  * @typedef {object} FallbackContext
  * @property {string} presetName
- * @property {import('../presets/store.js').PresetEntry[]} presetEntries
+ * @property {import('../presets/store.js').PresetEntry[]} [presetEntries] - one pauseless group; for callers without groups
+ * @property {import('../presets/store.js').PresetGroup[]} [presetGroups] - in the order typed
  * @property {string[]} positionals - raw command-line tokens, still unsplit
  * @property {string} projectRoot
  * @property {number} debugPortBase
@@ -48,6 +53,8 @@ import { findTerminal, openTerminalTabs } from './terminalTabs.js';
  * @property {typeof openTerminalTabs} [openTabs]
  * @property {typeof runSingleTabPool} [runPool]
  * @property {typeof findBusyPorts} [findBusyPorts]
+ * @property {import('../exec/runSchedule.js').Wait} [wait]
+ * @property {{ on: Function, off: Function, kill?: Function }} [process]
  */
 
 /**
@@ -58,13 +65,14 @@ import { findTerminal, openTerminalTabs } from './terminalTabs.js';
  */
 export async function runTerminalFallback(ctx) {
     const { log, projectRoot } = ctx;
+    const groups = ctx.presetGroups ?? [{ name: ctx.presetName, entries: ctx.presetEntries ?? [], waitAfterSeconds: 0 }];
 
     const configs = await (ctx.readConfigs ?? readIdeaRunConfigs)(projectRoot);
     log.debug(`${configs.length} run configurations read from ${DISK_SOURCE}`);
     // Only a launch that names run configurations needs the catalogue. A preset of nothing
     // but custom commands has no use for it, so a project WebStorm saved nothing for can
     // still run one — which is the whole point of a command that is not a run configuration.
-    const needsCatalogue = ctx.positionals.length > 0 || ctx.presetEntries.some((entry) => !isCustomEntry(entry));
+    const needsCatalogue = ctx.positionals.length > 0 || groups.some((group) => group.entries.some((entry) => !isCustomEntry(entry)));
     if (configs.length === 0 && needsCatalogue) {
         throw new FallbackError(
             `WebStorm has saved no run configurations for this project (looked in ${DISK_SOURCE}).\n` +
@@ -73,11 +81,11 @@ export async function runTerminalFallback(ctx) {
         );
     }
 
-    const plan = resolvePlan(ctx, configs);
+    const { plan, barriers } = resolvePlan(ctx, groups, configs);
     const tabs = buildTabs(plan, ctx);
 
     log.info(`${ctx.dryRun ? 'would launch' : 'launching'} ${tabs.length} configuration(s) without the IDE:`);
-    log.out(formatPlan(plan));
+    log.out(formatPlan(plan, barriers));
     announceCustomCommands(plan, log);
     for (const note of debugNotes(tabs)) log.warn(note);
 
@@ -92,21 +100,22 @@ export async function runTerminalFallback(ctx) {
     // --fallback=terminal` would open real windows. Both halves mean the same thing:
     // nothing is started.
     if (ctx.dryRun) {
-        log.out(formatCommands(tabs));
+        log.out(formatCommands(tabs, barriers));
         return 0;
     }
 
-    return await launch(tabs, ctx);
+    return await launch(tabs, barriers, ctx);
 }
 
 /**
  * Resolve the preset and the command line against what the IDE saved.
  *
  * @param {FallbackContext} ctx
+ * @param {import('../presets/store.js').PresetGroup[]} groups
  * @param {import('../resolve.js').RunConfigInfo[]} configs
- * @returns {import('../resolve.js').PlanEntry[]}
+ * @returns {ReturnType<typeof buildScheduledLaunchPlan>}
  */
-function resolvePlan(ctx, configs) {
+function resolvePlan(ctx, groups, configs) {
     // Now that there *is* a list of real names, a token is split the same way the main
     // path splits it: `api > repro:stale-job:debug` is a configuration, not a
     // request to debug `api > repro:stale-job`. src/cli.js could not do this itself
@@ -115,9 +124,9 @@ function resolvePlan(ctx, configs) {
     const known = new Set(configs.map((config) => config.name));
     const requests = parseRequests(ctx.positionals, { isKnownName: (name) => known.has(name) });
 
-    let plan;
+    let scheduled;
     try {
-        plan = buildLaunchPlan({ configs, preset: ctx.presetEntries, requests });
+        scheduled = buildScheduledLaunchPlan({ configs, presets: groups, requests });
     } catch (err) {
         // The name really is unknown *to this path*, which is a weaker statement than the
         // main path's: the IDE may well know it and simply not have written it out yet.
@@ -132,13 +141,13 @@ function resolvePlan(ctx, configs) {
         throw err;
     }
 
-    if (plan.length === 0) {
+    if (scheduled.plan.length === 0) {
         throw new FallbackError(
             `nothing to launch: preset "${ctx.presetName}" is empty and no configuration was named.\n` +
                 '  Pass configuration names, or configure a preset with --configure.',
         );
     }
-    return plan;
+    return scheduled;
 }
 
 /**
@@ -220,10 +229,11 @@ function debugNotes(tabs) {
  * Open the tabs, or merge everything into this terminal when there are none to open.
  *
  * @param {FallbackTab[]} tabs
+ * @param {import('../exec/schedule.js').PresetBarrier[]} barriers
  * @param {FallbackContext} ctx
  * @returns {Promise<number>}
  */
-async function launch(tabs, ctx) {
+async function launch(tabs, barriers, ctx) {
     const { log } = ctx;
     const env = ctx.env ?? process.env;
     const terminal = await (ctx.findTerminal ?? findTerminal)({ env });
@@ -237,26 +247,80 @@ async function launch(tabs, ctx) {
                 '  running everything in this one window instead, with a coloured tag per configuration.\n' +
                 '  Ctrl-C stops all of them at once.',
         );
-        return await (ctx.runPool ?? runSingleTabPool)(tabs, { cwd: ctx.projectRoot, env, log });
+        return await (ctx.runPool ?? runSingleTabPool)(tabs, {
+            cwd: ctx.projectRoot,
+            env,
+            log,
+            barriers,
+            wait: ctx.wait,
+            process: ctx.process,
+        });
     }
 
     const { adapter } = terminal;
     log.info(`opening ${tabs.length} ${adapter.opens}(s) in ${adapter.id}`);
-    await (ctx.openTabs ?? openTerminalTabs)(tabs, { terminal, cwd: ctx.projectRoot, env, log });
+
+    /** @param {number[]} indexes */
+    const names = (indexes) => indexes.map((index) => tabs[index].name).join(', ');
+    let opened = 0;
+    // Set only while a stage is being opened: what a rejection leaves in doubt.
+    let opening = 0;
+
+    const interrupt = createInterruptScope(ctx.process);
+    let report;
+    try {
+        report = await runSchedule(tabs.length, barriers, {
+            // One stage is one package: it opens or fails together, so it reports as one.
+            launchBatch: async (start, end) => {
+                opening = end;
+                await (ctx.openTabs ?? openTerminalTabs)(tabs.slice(start, end), { terminal, cwd: ctx.projectRoot, env, log });
+                opened = end;
+                return { started: Array.from({ length: end - start }, (_, i) => start + i), failed: [] };
+            },
+            wait: ctx.wait,
+            signal: interrupt.signal,
+            log: { info: (line) => log.info(line) },
+        });
+    } catch (err) {
+        // With a single package there is nothing to add to what the error says. Behind a pause
+        // there is: earlier stages are open and stay that way, and how far this one got is not
+        // known (an emulator can fail after opening some of its tabs).
+        if (barriers.length > 0) {
+            const range = (/** @type {number} */ from, /** @type {number} */ to) =>
+                Array.from({ length: to - from }, (_, i) => from + i);
+            log.warn(
+                `could not open everything: ${opened > 0 ? `already open and left running: ${names(range(0, opened))}; ` : ''}` +
+                    `may be partly open: ${names(range(opened, opening))}` +
+                    `${opening < tabs.length ? `; not started: ${names(range(opening, tabs.length))}` : ''}`,
+            );
+        }
+        throw err;
+    } finally {
+        interrupt.dispose();
+    }
+
+    if (report.cancelled) {
+        log.warn(
+            `stopped: ${report.started.length} of ${tabs.length} started, and those tabs keep running` +
+                `${report.skipped.length > 0 ? `; not started: ${names(report.skipped)}` : ''}`,
+        );
+        return CANCELLED_EXIT_CODE;
+    }
 
     // Nothing is waited on: the tabs are detached and outlive this process, so the only
     // honest report is what was asked for, not what it went on to do.
-    log.info(`started ${tabs.length} configuration(s) in ${adapter.id}`);
+    log.info(`started ${report.started.length} configuration(s) in ${adapter.id}`);
     return 0;
 }
 
 /**
  * @param {FallbackTab[]} tabs
+ * @param {import('../exec/schedule.js').PresetBarrier[]} [barriers] - shown where they fall
  * @returns {string} one line per tab, for --dry-run: the exact command each would run
  */
-export function formatCommands(tabs) {
+export function formatCommands(tabs, barriers = []) {
     if (tabs.length === 0) return 'nothing to launch';
 
     const width = Math.max(...tabs.map((tab) => tab.name.length));
-    return tabs.map((tab) => `→ ${tab.name.padEnd(width)}  ${tab.command}`).join('\n');
+    return insertWaitRows(tabs.map((tab) => `→ ${tab.name.padEnd(width)}  ${tab.command}`), barriers).join('\n');
 }
