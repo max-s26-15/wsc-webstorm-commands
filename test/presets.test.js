@@ -9,6 +9,7 @@ import {
     CONFIG_DIR,
     CONFIG_FILE,
     DEFAULT_PRESET,
+    MAX_WAIT_AFTER_SECONDS,
     PresetConfigError,
     SCHEMA_VERSION,
     configPath,
@@ -16,8 +17,10 @@ import {
     emptyConfig,
     findProjectRoot,
     getPreset,
+    getPresetGroup,
     hasPreset,
     isCustomEntry,
+    isValidWaitAfterSeconds,
     listPresets,
     MIGRATIONS,
     migrateConfig,
@@ -25,6 +28,7 @@ import {
     readPresets,
     serializeConfig,
     setPreset,
+    setPresetWaitAfter,
     writeFileAtomic,
     renameWithRetry,
     writePresets,
@@ -35,14 +39,16 @@ const STORE_URL = pathToFileURL(fileURLToPath(new URL('../src/presets/store.js',
 
 /** A config exercising every field, including ones this build does not know. */
 const SAMPLE = {
-    version: 1,
+    version: 2,
     defaultPreset: 'default',
     presets: {
-        default: [
-            { name: 'web', mode: 'debug' },
-            { name: 'api', mode: 'run' },
-        ],
-        backend: [{ name: 'mailer', mode: 'run' }],
+        default: {
+            entries: [
+                { name: 'web', mode: 'debug' },
+                { name: 'api', mode: 'run' },
+            ],
+        },
+        backend: { entries: [{ name: 'mailer', mode: 'run' }] },
     },
 };
 
@@ -146,7 +152,7 @@ describe('parseConfig — valid input', () => {
 
     test('defaults a missing entry mode to run', () => {
         const config = parseConfig('{"presets":{"default":[{"name":"api"}]}}');
-        assert.equal(config.presets.default[0].mode, 'run');
+        assert.equal(config.presets.default.entries[0].mode, 'run');
     });
 
     test('keeps unknown top-level keys — a newer wsc may have written them', () => {
@@ -156,7 +162,7 @@ describe('parseConfig — valid input', () => {
 
     test('keeps unknown keys inside a preset entry', () => {
         const config = parseConfig('{"presets":{"default":[{"name":"api","mode":"run","color":"red"}]}}');
-        assert.equal(config.presets.default[0].color, 'red');
+        assert.equal(config.presets.default.entries[0].color, 'red');
     });
 
     test('upgrades an older schema version', () => {
@@ -185,11 +191,11 @@ describe('parseConfig — rejected input', () => {
         rejects(`{"version":${SCHEMA_VERSION + 1}}`, /written by a newer version of wsc/));
     test('a non-string defaultPreset', () => rejects('{"defaultPreset":5}', /"defaultPreset" must be a string/));
     test('presets as an array', () => rejects('{"presets":[]}', /"presets" must be an object/));
-    test('a preset that is not an array', () => rejects('{"presets":{"a":{}}}', /preset "a" must be an array/));
+    test('a preset that is not an array', () => rejects('{"presets":{"a":{}}}', /preset "a" "entries" must be an array/));
     test('an entry that is neither an object nor a name', () =>
         rejects('{"presets":{"a":[42]}}', /preset "a" entry 0 must be an object/));
     test('a bare string entry once the schema is current', () =>
-        rejects(`{"version":${SCHEMA_VERSION},"presets":{"a":["api"]}}`, /entry 0 must be an object/));
+        rejects(`{"version":${SCHEMA_VERSION},"presets":{"a":{"entries":["api"]}}}`, /entry 0 must be an object/));
     test('an entry without a name', () =>
         rejects('{"presets":{"a":[{"mode":"run"}]}}', /entry 0 is missing a non-empty "name"/));
     test('an entry with an empty name', () =>
@@ -199,8 +205,8 @@ describe('parseConfig — rejected input', () => {
 
     test('terminal is a mode, and survives a round trip', () => {
         const config = parseConfig('{"presets":{"default":[{"name":"web","mode":"terminal"}]}}');
-        assert.deepEqual(config.presets.default, [{ name: 'web', mode: 'terminal' }]);
-        assert.deepEqual(parseConfig(serializeConfig(config)).presets.default, config.presets.default);
+        assert.deepEqual(config.presets.default.entries, [{ name: 'web', mode: 'terminal' }]);
+        assert.deepEqual(parseConfig(serializeConfig(config)).presets.default.entries, config.presets.default.entries);
     });
 
     test('names the offending entry index, not just the preset', () => {
@@ -224,7 +230,7 @@ describe('migrations', () => {
 
     test('v0 bare-string entries become full entries in run mode', () => {
         const config = parseConfig('{"presets":{"default":["web","api"]}}');
-        assert.deepEqual(config.presets.default, [
+        assert.deepEqual(config.presets.default.entries, [
             { name: 'web', mode: 'run' },
             { name: 'api', mode: 'run' },
         ]);
@@ -232,7 +238,7 @@ describe('migrations', () => {
 
     test('v0 tolerates a preset mixing strings and full entries', () => {
         const config = parseConfig('{"presets":{"default":["web",{"name":"api","mode":"debug"}]}}');
-        assert.deepEqual(config.presets.default, [
+        assert.deepEqual(config.presets.default.entries, [
             { name: 'web', mode: 'run' },
             { name: 'api', mode: 'debug' },
         ]);
@@ -241,7 +247,7 @@ describe('migrations', () => {
     test('names containing colons survive the v0 shorthand untouched', () => {
         // Mode parsing belongs to the resolver; the store must not guess here.
         const config = parseConfig('{"presets":{"default":["api > repro:stale-job:debug"]}}');
-        assert.deepEqual(config.presets.default, [
+        assert.deepEqual(config.presets.default.entries, [
             { name: 'api > repro:stale-job:debug', mode: 'run' },
         ]);
     });
@@ -257,7 +263,7 @@ describe('migrations', () => {
     });
 
     test('a config already at the current version is passed through unchanged', () => {
-        const config = { ...emptyConfig(), presets: { default: [{ name: 'api', mode: 'debug' }] } };
+        const config = { ...emptyConfig(), presets: { default: { entries: [{ name: 'api', mode: 'debug' }] } } };
         assert.deepEqual(migrateConfig(structuredClone(config)), config);
     });
 
@@ -296,7 +302,7 @@ describe('migrations', () => {
 
             const onDisk = JSON.parse(await fs.readFile(configPath(dir), 'utf8'));
             assert.equal(onDisk.version, SCHEMA_VERSION);
-            assert.deepEqual(onDisk.presets.default, [{ name: 'web', mode: 'run' }]);
+            assert.deepEqual(onDisk.presets.default.entries, [{ name: 'web', mode: 'run' }]);
         } finally {
             await cleanup();
         }
@@ -339,9 +345,9 @@ describe('serializeConfig', () => {
     test('puts name and mode first inside an entry', () => {
         const text = serializeConfig({
             ...emptyConfig(),
-            presets: { default: [{ color: 'red', mode: 'debug', name: 'api' }] },
+            presets: { default: { entries: [{ color: 'red', mode: 'debug', name: 'api' }] } },
         });
-        assert.deepEqual(Object.keys(JSON.parse(text).presets.default[0]), ['name', 'mode', 'color']);
+        assert.deepEqual(Object.keys(JSON.parse(text).presets.default.entries[0]), ['name', 'mode', 'color']);
     });
 
     test('is idempotent — rewriting an unchanged config produces identical bytes', () => {
@@ -436,7 +442,7 @@ describe('writePresets', () => {
             await writePresets(dir, await readPresets(dir));
             const reread = await readPresets(dir);
             assert.equal(reread.futureFlag, true);
-            assert.equal(reread.presets.default[0].note, 'keep me');
+            assert.equal(reread.presets.default.entries[0].note, 'keep me');
         } finally {
             await cleanup();
         }
@@ -580,13 +586,13 @@ describe('writeFileAtomic — durability', () => {
         try {
             const configs = Array.from({ length: 20 }, (_, i) => ({
                 ...emptyConfig(),
-                presets: { default: [{ name: `config-${i}`, mode: 'run' }] },
+                presets: { default: { entries: [{ name: `config-${i}`, mode: 'run' }] } },
             }));
 
             await Promise.all(configs.map((config) => writePresets(dir, config)));
 
             const result = await readPresets(dir);
-            assert.match(result.presets.default[0].name, /^config-\d+$/, 'the winner must be one complete write');
+            assert.match(result.presets.default.entries[0].name, /^config-\d+$/, 'the winner must be one complete write');
             assert.deepEqual(await tmpArtifacts(path.join(dir, CONFIG_DIR)), []);
         } finally {
             await cleanup();
@@ -634,7 +640,7 @@ function writerLoopSource(dir) {
         for (;;) {
             await writePresets(${JSON.stringify(dir)}, {
                 ...emptyConfig(),
-                presets: { default: [{ name: 'run-' + i++, mode: 'run', filler }] },
+                presets: { default: { entries: [{ name: 'run-' + i++, mode: 'run', filler }] } },
             });
         }
     `;
@@ -702,7 +708,7 @@ describe('inherited property names', () => {
 
 describe('preset accessors', () => {
     test('getPreset returns the default preset when no name is given', () => {
-        assert.deepEqual(getPreset(SAMPLE), SAMPLE.presets.default);
+        assert.deepEqual(getPreset(SAMPLE), SAMPLE.presets.default.entries);
     });
 
     test('getPreset returns an empty array for an unknown preset', () => {
@@ -712,13 +718,13 @@ describe('preset accessors', () => {
     test('getPreset returns a copy — mutating it does not touch the config', () => {
         const entries = getPreset(SAMPLE);
         entries.push({ name: 'injected', mode: 'run' });
-        assert.equal(SAMPLE.presets.default.length, 2);
+        assert.equal(SAMPLE.presets.default.entries.length, 2);
     });
 
     test('setPreset returns a new config and leaves the original alone', () => {
         const updated = setPreset(SAMPLE, 'default', [{ name: 'shared', mode: 'run' }]);
-        assert.deepEqual(updated.presets.default, [{ name: 'shared', mode: 'run' }]);
-        assert.equal(SAMPLE.presets.default.length, 2, 'the input config must not be mutated');
+        assert.deepEqual(updated.presets.default.entries, [{ name: 'shared', mode: 'run' }]);
+        assert.equal(SAMPLE.presets.default.entries.length, 2, 'the input config must not be mutated');
         assert.deepEqual(updated.presets.backend, SAMPLE.presets.backend, 'other presets survive');
     });
 
@@ -747,13 +753,13 @@ describe('deletePreset', () => {
 
     test('returns the entries the deleted preset held', () => {
         const { entries } = deletePreset(SAMPLE, 'backend');
-        assert.deepEqual(entries, SAMPLE.presets.backend);
+        assert.deepEqual(entries, SAMPLE.presets.backend.entries);
     });
 
     test('mutating the returned entries does not touch the input config', () => {
         const { entries } = deletePreset(SAMPLE, 'backend');
         entries.push({ name: 'injected', mode: 'run' });
-        assert.equal(SAMPLE.presets.backend.length, 1);
+        assert.equal(SAMPLE.presets.backend.entries.length, 1);
     });
 
     test('defaultReset is false, and defaultPreset untouched, when deleting a non-default preset', () => {
@@ -821,13 +827,13 @@ describe('custom command entries', () => {
     const parse = (entries) => parseConfig(JSON.stringify({ version: 1, presets: { default: entries } }));
 
     test('an entry with commands parses as a custom entry', () => {
-        const [entry] = parse([custom]).presets.default;
+        const [entry] = parse([custom]).presets.default.entries;
         assert.deepEqual(entry, custom);
         assert.equal(isCustomEntry(entry), true);
     });
 
     test('mode may be left out: a custom entry is always a terminal one', () => {
-        const [entry] = parse([{ name: 'seed db', commands: ['npm i'] }]).presets.default;
+        const [entry] = parse([{ name: 'seed db', commands: ['npm i'] }]).presets.default.entries;
         assert.equal(entry.mode, 'terminal');
     });
 
@@ -868,12 +874,12 @@ describe('custom command entries', () => {
     }
 
     test('a tab inside a name is fine', () => {
-        const [entry] = parse([{ name: 'seed\tdb', commands: ['echo hi'] }]).presets.default;
+        const [entry] = parse([{ name: 'seed\tdb', commands: ['echo hi'] }]).presets.default.entries;
         assert.equal(entry.name, 'seed\tdb');
     });
 
     test('a tab inside a command is fine', () => {
-        const [entry] = parse([{ name: 'seed db', commands: ['printf "a\tb"'] }]).presets.default;
+        const [entry] = parse([{ name: 'seed db', commands: ['printf "a\tb"'] }]).presets.default.entries;
         assert.deepEqual(entry.commands, ['printf "a\tb"']);
     });
 
@@ -897,7 +903,7 @@ describe('custom command entries', () => {
 
     test('serializes commands right after mode, keeps unknown keys, and rewriting is a no-op', () => {
         const text = serializeConfig(parse([{ zeta: 1, commands: ['npm i'], name: 'seed db', mode: 'terminal' }]));
-        const written = JSON.parse(text).presets.default[0];
+        const written = JSON.parse(text).presets.default.entries[0];
 
         assert.deepEqual(Object.keys(written), ['name', 'mode', 'commands', 'zeta']);
         assert.equal(serializeConfig(parseConfig(text)), text);
@@ -905,9 +911,171 @@ describe('custom command entries', () => {
 
     test('a custom entry may be called like a member of Object.prototype', () => {
         for (const name of ['constructor', '__proto__', 'toString']) {
-            const [entry] = parse([{ name, commands: ['echo hi'] }]).presets.default;
+            const [entry] = parse([{ name, commands: ['echo hi'] }]).presets.default.entries;
             assert.equal(entry.name, name);
             assert.deepEqual(entry.commands, ['echo hi']);
+        }
+    });
+});
+
+describe('schema 2 — preset metadata', () => {
+    const entry = { name: 'db', mode: 'run' };
+
+    test('v1 migrates in memory to an object, and the entries keep their unknown keys', () => {
+        const old = '{"version":1,"presets":{"infra":[{"name":"db","x":7}]}}';
+        const config = parseConfig(old);
+        assert.equal(config.version, 2);
+        assert.deepEqual(config.presets.infra, { entries: [{ name: 'db', mode: 'run', x: 7 }] });
+        assert.equal(getPresetGroup(config, 'infra').waitAfterSeconds, 0);
+    });
+
+    test('v0 migrates through both steps', () => {
+        const config = parseConfig('{"presets":{"infra":["db"]}}');
+        assert.equal(config.version, 2);
+        assert.deepEqual(config.presets.infra, { entries: [entry] });
+    });
+
+    test('a pause survives editing the entries, and zero is written as no field at all', () => {
+        const config = parseConfig('{"version":1,"presets":{"infra":[{"name":"db"}]}}');
+        const updated = setPresetWaitAfter(config, 'infra', 10);
+        assert.equal(getPresetGroup(setPreset(updated, 'infra', []), 'infra').waitAfterSeconds, 10);
+        const zero = setPresetWaitAfter(updated, 'infra', 0);
+        assert.equal(Object.hasOwn(JSON.parse(serializeConfig(zero)).presets.infra, 'waitAfterSeconds'), false);
+        assert.equal(getPresetGroup(config, 'infra').waitAfterSeconds, 0, 'the input config is not mutated');
+    });
+
+    test('only integers from 0 to 86400 are a pause', () => {
+        assert.equal(MAX_WAIT_AFTER_SECONDS, 86400);
+        for (const value of [-1, 0.5, 86401, '10', null, true, NaN, Infinity, undefined]) {
+            assert.equal(isValidWaitAfterSeconds(value), false, String(value));
+        }
+        for (const value of [0, 10, 86400]) assert.equal(isValidWaitAfterSeconds(value), true);
+    });
+
+    test('setPresetWaitAfter refuses what the file would refuse', () => {
+        assert.throws(() => setPresetWaitAfter(emptyConfig(), 'a', 86401), /86400/);
+    });
+
+    test('a preset that does not exist yet can take a pause', () => {
+        const config = setPresetWaitAfter(emptyConfig(), 'new', 5);
+        assert.deepEqual(getPresetGroup(config, 'new'), { name: 'new', entries: [], waitAfterSeconds: 5 });
+    });
+
+    test('getPresetGroup of a missing preset is empty, not an error', () => {
+        assert.deepEqual(getPresetGroup(emptyConfig(), 'nope'), { name: 'nope', entries: [], waitAfterSeconds: 0 });
+    });
+
+    test('getPresetGroup defaults to defaultPreset and returns a copy of the entries', () => {
+        const config = parseConfig('{"version":2,"defaultPreset":"a","presets":{"a":{"entries":[{"name":"db"}],"waitAfterSeconds":3}}}');
+        const group = getPresetGroup(config);
+        assert.deepEqual(group, { name: 'a', entries: [entry], waitAfterSeconds: 3 });
+        group.entries.push({ name: 'x', mode: 'run' });
+        assert.equal(getPreset(config, 'a').length, 1);
+    });
+
+    test('v2 rejects array presets and missing entries', () => {
+        const rejects = (presets, message) => assert.throws(
+            () => parseConfig(JSON.stringify({ version: 2, presets }), '/p/c.json'),
+            (err) => {
+                assert.ok(err instanceof PresetConfigError);
+                assert.match(err.message, /^\/p\/c\.json: /);
+                assert.match(err.detail, message);
+                return true;
+            },
+        );
+        rejects({ a: [] }, /preset "a" must be an object/);
+        rejects({ a: null }, /preset "a" must be an object/);
+        rejects({ a: {} }, /preset "a" "entries" must be an array/);
+        rejects({ a: { entries: 'x' } }, /preset "a" "entries" must be an array/);
+    });
+
+    test('a malformed legacy preset is reported by the validator, not swallowed by the migration', () => {
+        for (const version of [0, 1]) {
+            for (const preset of ['x', 5, null, { entries: [] }]) {
+                assert.throws(
+                    () => parseConfig(JSON.stringify({ version, presets: { a: preset } }), '/p/c.json'),
+                    (err) => err instanceof PresetConfigError && /preset "a" "entries" must be an array/.test(err.detail),
+                );
+            }
+        }
+    });
+
+    for (const value of [-1, 0.5, 86401, '10', null, true]) {
+        test(`a waitAfterSeconds of ${JSON.stringify(value)} names the file and the preset`, () => {
+            assert.throws(
+                () => parseConfig(JSON.stringify({ version: 2, presets: { infra: { entries: [], waitAfterSeconds: value } } }), '/p/c.json'),
+                (err) => err instanceof PresetConfigError
+                    && err.filePath === '/p/c.json'
+                    && /preset "infra" "waitAfterSeconds"/.test(err.detail),
+            );
+        });
+    }
+
+    test('a waitAfterSeconds of 0 in the file reads as no pause, and is not written back', () => {
+        const config = parseConfig('{"version":2,"presets":{"a":{"entries":[],"waitAfterSeconds":0}}}');
+        assert.deepEqual(config.presets.a, { entries: [] });
+    });
+
+    test('unknown fields survive at all three levels', () => {
+        const text = JSON.stringify({
+            version: 2,
+            top: 1,
+            presets: { a: { zeta: 1, waitAfterSeconds: 4, alpha: 2, entries: [{ name: 'db', extra: 3 }] } },
+        });
+        const written = JSON.parse(serializeConfig(setPreset(parseConfig(text), 'a', getPreset(parseConfig(text), 'a'))));
+        assert.equal(written.top, 1);
+        assert.deepEqual(Object.keys(written.presets.a), ['entries', 'waitAfterSeconds', 'alpha', 'zeta']);
+        assert.equal(written.presets.a.entries[0].extra, 3);
+    });
+
+    test('serializing is idempotent with metadata', () => {
+        const once = serializeConfig(parseConfig('{"version":2,"presets":{"a":{"z":1,"entries":[{"name":"db"}],"waitAfterSeconds":4}}}'));
+        assert.equal(serializeConfig(parseConfig(once)), once);
+    });
+
+    for (const name of ['__proto__', 'constructor', 'toString']) {
+        test(`metadata survives edit and delete of prototype-named presets: ${name}`, () => {
+            const json = `{"version":2,"presets":{${JSON.stringify(name)}:{"entries":[{"name":"db"}],"waitAfterSeconds":4,"note":"x"},"real":{"entries":[]}}}`;
+            const config = parseConfig(json);
+            assert.equal(getPresetGroup(config, name).waitAfterSeconds, 4);
+
+            const edited = setPreset(config, name, []);
+            assert.equal(getPresetGroup(edited, name).waitAfterSeconds, 4);
+            assert.equal(edited.presets[name].note, 'x');
+
+            const paused = setPresetWaitAfter(edited, name, 9);
+            assert.equal(getPresetGroup(paused, name).waitAfterSeconds, 9);
+            assert.ok(Object.hasOwn(JSON.parse(serializeConfig(paused)).presets, name));
+
+            const { config: after, entries } = deletePreset(config, name);
+            assert.deepEqual(entries, [entry]);
+            assert.equal(hasPreset(after, name), false);
+            assert.equal(Object.getPrototypeOf(after.presets), Object.prototype);
+            assert.equal({}.waitAfterSeconds, undefined, 'Object.prototype must be untouched');
+        });
+
+        test(`a pause for a preset that is not there does not read an inherited member: ${name}`, () => {
+            assert.deepEqual(getPresetGroup(emptyConfig(), name), { name, entries: [], waitAfterSeconds: 0 });
+            const config = setPresetWaitAfter(emptyConfig(), name, 2);
+            assert.equal(getPresetGroup(config, name).waitAfterSeconds, 2);
+            assert.equal(Object.getPrototypeOf(config.presets), Object.prototype);
+        });
+    }
+
+    test('read and unchanged configure do not rewrite v1', async () => {
+        const text = '{"version":1,"presets":{"default":[{"name":"web"}]}}\n';
+        const { dir, cleanup } = await tmpProject(text);
+        try {
+            const config = await readPresets(dir);
+            assert.equal(config.version, 2);
+            assert.equal(await fs.readFile(configPath(dir), 'utf8'), text, 'a read leaves the file alone');
+
+            await writePresets(dir, config);
+            const written = JSON.parse(await fs.readFile(configPath(dir), 'utf8'));
+            assert.equal(written.version, 2);
+            assert.deepEqual(written.presets.default, { entries: [{ name: 'web', mode: 'run' }] });
+        } finally {
+            await cleanup();
         }
     });
 });

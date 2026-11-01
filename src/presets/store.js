@@ -23,10 +23,13 @@ export const CONFIG_DIR = '.idea';
 export const CONFIG_FILE = 'webstorm-commands.json';
 
 /** Schema version written by this build. Bumped only on a breaking layout change. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Name used when no preset is requested. */
 export const DEFAULT_PRESET = 'default';
+
+/** The longest pause after a preset: a day, comfortably below what Node's timers can hold. */
+export const MAX_WAIT_AFTER_SECONDS = 86400;
 
 // The launch modes a preset entry may carry — the same list the command line accepts.
 export { MODES };
@@ -39,9 +42,15 @@ export { MODES };
  *   [extra: string]: unknown,
  * }} PresetEntry
  * @typedef {{
+ *   entries: PresetEntry[],
+ *   waitAfterSeconds?: number,
+ *   [extra: string]: unknown,
+ * }} PresetDefinition
+ * @typedef {{ name: string, entries: PresetEntry[], waitAfterSeconds: number }} PresetGroup
+ * @typedef {{
  *   version: number,
  *   defaultPreset: string,
- *   presets: Record<string, PresetEntry[]>,
+ *   presets: Record<string, PresetDefinition>,
  *   [extra: string]: unknown,
  * }} PresetConfig
  */
@@ -152,7 +161,33 @@ export const MIGRATIONS = {
             ]),
         ),
     }),
+
+    /**
+     * v1 → v2: a preset was its list of entries; now it is an object holding that list beside
+     * what belongs to the preset as a whole (`waitAfterSeconds`).
+     *
+     * Anything else is wrapped too, unexamined: it was never valid v1, and as `entries` it
+     * reaches the validator, which says what is wrong with it. Left bare, a v1 file holding
+     * `{"entries": []}` would be quietly accepted as if it had been v2 all along.
+     */
+    1: (config) => ({
+        ...config,
+        presets: Object.fromEntries(
+            Object.entries(config.presets).map(([name, entries]) => [name, { entries }]),
+        ),
+    }),
 };
+
+/**
+ * Whether a value may be a preset's pause: a JSON number, whole, within range. A string, a
+ * null or a boolean is a mistake to report, not a pause to coerce.
+ *
+ * @param {unknown} value
+ * @returns {value is number}
+ */
+export function isValidWaitAfterSeconds(value) {
+    return Number.isInteger(value) && /** @type {number} */ (value) >= 0 && /** @type {number} */ (value) <= MAX_WAIT_AFTER_SECONDS;
+}
 
 /**
  * Bring a config up to the current schema, one version at a time.
@@ -236,19 +271,45 @@ export function parseConfig(text, filePath = configPath('.')) {
     // Built through Object.fromEntries rather than `obj[name] = …`: a plain assignment
     // of a "__proto__" key invokes the prototype setter, which would silently drop that
     // preset and mutate the object's prototype. fromEntries defines own properties.
-    /** @type {Record<string, PresetEntry[]>} */
+    /** @type {Record<string, PresetDefinition>} */
     const parsedPresets = Object.fromEntries(
-        Object.entries(migrated.presets).map(([name, entries]) => {
-            if (!Array.isArray(entries)) {
-                throw new PresetConfigError(filePath, `preset "${name}" must be an array`);
-            }
-            return [name, entries.map((entry, index) => parseEntry(entry, name, index, filePath))];
-        }),
+        Object.entries(migrated.presets).map(([name, preset]) => [name, parsePreset(preset, name, filePath)]),
     );
 
     // Unknown top-level keys are carried through untouched: a newer wsc, or the user,
     // may have added something this build does not know about yet.
     return { ...migrated, presets: parsedPresets };
+}
+
+/**
+ * @param {unknown} preset
+ * @param {string} name
+ * @param {string} filePath
+ * @returns {PresetDefinition}
+ */
+function parsePreset(preset, name, filePath) {
+    if (preset === null || typeof preset !== 'object' || Array.isArray(preset)) {
+        throw new PresetConfigError(filePath, `preset "${name}" must be an object with an "entries" list`);
+    }
+
+    const { entries, waitAfterSeconds, ...extra } = /** @type {Record<string, unknown>} */ (preset);
+
+    if (!Array.isArray(entries)) {
+        throw new PresetConfigError(filePath, `preset "${name}" "entries" must be an array`);
+    }
+    if (waitAfterSeconds !== undefined && !isValidWaitAfterSeconds(waitAfterSeconds)) {
+        throw new PresetConfigError(
+            filePath,
+            `preset "${name}" "waitAfterSeconds" must be a whole number from 0 to ${MAX_WAIT_AFTER_SECONDS}, got ${JSON.stringify(waitAfterSeconds)}`,
+        );
+    }
+
+    return {
+        ...extra,
+        entries: entries.map((entry, index) => parseEntry(entry, name, index, filePath)),
+        // Zero is "no pause", and has one spelling: no field.
+        ...(waitAfterSeconds ? { waitAfterSeconds: /** @type {number} */ (waitAfterSeconds) } : {}),
+    };
 }
 
 /**
@@ -337,14 +398,18 @@ export function serializeConfig(config) {
         version: version ?? SCHEMA_VERSION,
         defaultPreset: defaultPreset ?? DEFAULT_PRESET,
         presets: Object.fromEntries(
-            Object.entries(presets ?? {}).map(([name, entries]) => [
+            Object.entries(presets ?? {}).map(([name, { entries, waitAfterSeconds, ...presetExtra }]) => [
                 name,
-                entries.map(({ name: entryName, mode, commands, ...extra }) => ({
-                    name: entryName,
-                    mode,
-                    ...(commands === undefined ? {} : { commands }),
-                    ...sortKeys(extra),
-                })),
+                {
+                    entries: entries.map(({ name: entryName, mode, commands, ...extra }) => ({
+                        name: entryName,
+                        mode,
+                        ...(commands === undefined ? {} : { commands }),
+                        ...sortKeys(extra),
+                    })),
+                    ...(waitAfterSeconds ? { waitAfterSeconds } : {}),
+                    ...sortKeys(presetExtra),
+                },
             ]),
         ),
     };
@@ -530,7 +595,24 @@ async function syncDirectory(dir) {
 export function getPreset(config, name = config.defaultPreset) {
     // hasOwn, not `?? []`: a preset named "constructor" or "toString" would otherwise
     // resolve to an inherited Object.prototype member and blow up on the spread.
-    return hasPreset(config, name) ? [...config.presets[name]] : [];
+    return hasPreset(config, name) ? [...config.presets[name].entries] : [];
+}
+
+/**
+ * A preset as a launch sees it: its entries, and how long to pause after them.
+ *
+ * A missing preset is an empty group, not an error: saying "no such preset" is the CLI's call.
+ *
+ * @param {PresetConfig} config
+ * @param {string} [name] - defaults to the config's defaultPreset
+ * @returns {PresetGroup}
+ */
+export function getPresetGroup(config, name = config.defaultPreset) {
+    return {
+        name,
+        entries: getPreset(config, name),
+        waitAfterSeconds: hasPreset(config, name) ? config.presets[name].waitAfterSeconds ?? 0 : 0,
+    };
 }
 
 /**
@@ -545,13 +627,36 @@ export function hasPreset(config, name) {
 }
 
 /**
+ * Replace a preset's entries; its pause and unknown fields stay.
+ *
  * @param {PresetConfig} config
  * @param {string} name
  * @param {PresetEntry[]} entries
  * @returns {PresetConfig} a new config — the input is left untouched
  */
 export function setPreset(config, name, entries) {
-    return { ...config, presets: { ...config.presets, [name]: [...entries] } };
+    const existing = hasPreset(config, name) ? config.presets[name] : {};
+    return { ...config, presets: { ...config.presets, [name]: { ...existing, entries: [...entries] } } };
+}
+
+/**
+ * Set a preset's pause. Zero removes the field; a preset not in the file yet is created empty.
+ *
+ * @param {PresetConfig} config
+ * @param {string} name
+ * @param {number} seconds
+ * @returns {PresetConfig} a new config — the input is left untouched
+ * @throws {RangeError} for what the file itself would refuse
+ */
+export function setPresetWaitAfter(config, name, seconds) {
+    if (!isValidWaitAfterSeconds(seconds)) {
+        throw new RangeError(`a pause must be a whole number of seconds from 0 to ${MAX_WAIT_AFTER_SECONDS}, got ${seconds}`);
+    }
+
+    // Rest, not `delete`: the input config is shared with the caller.
+    const { waitAfterSeconds: _, ...kept } = hasPreset(config, name) ? config.presets[name] : { entries: [] };
+    const preset = seconds === 0 ? kept : { ...kept, waitAfterSeconds: seconds };
+    return { ...config, presets: { ...config.presets, [name]: /** @type {PresetDefinition} */ (preset) } };
 }
 
 /**
@@ -581,7 +686,7 @@ export function deletePreset(config, name) {
 
     return {
         config: { ...config, presets, ...(defaultReset ? { defaultPreset: DEFAULT_PRESET } : {}) },
-        entries: [...config.presets[name]],
+        entries: getPreset(config, name),
         defaultReset,
     };
 }

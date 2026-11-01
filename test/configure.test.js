@@ -129,6 +129,20 @@ async function configure(opts) {
 }
 
 describe('runConfigure — the interactive screen', () => {
+    test('read and unchanged configure do not rewrite v1', async () => {
+        const text = '{"version":1,"presets":{"default":[{"name":"web"}]}}\n';
+        const { dir, cleanup } = await tmpProject(text);
+        try {
+            const { code, output } = await configure({ dir, config: await readPresets(dir) });
+
+            assert.equal(code, 0);
+            assert.match(output, /unchanged/);
+            assert.equal(await fs.readFile(configPath(dir), 'utf8'), text);
+        } finally {
+            await cleanup();
+        }
+    });
+
     test('offers all 13 configurations from the IDE', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
@@ -154,7 +168,7 @@ describe('runConfigure — the interactive screen', () => {
             assert.deepEqual(asked.slice(1).map((a) => a.message), ['Mode for "web"', 'Mode for "api"']);
 
             const saved = await readPresets(dir);
-            assert.deepEqual(saved.presets.default, [
+            assert.deepEqual(saved.presets.default.entries, [
                 { name: 'web', mode: 'debug' },
                 { name: 'api', mode: 'run' },
             ]);
@@ -182,7 +196,7 @@ describe('runConfigure — the interactive screen', () => {
         try {
             await configure({ dir, checked: ['web', 'api'], modes: ['terminal', 'run'] });
             const saved = await readPresets(dir);
-            assert.deepEqual(saved.presets.default, [
+            assert.deepEqual(saved.presets.default.entries, [
                 { name: 'web', mode: 'terminal' },
                 { name: 'api', mode: 'run' },
             ]);
@@ -233,7 +247,7 @@ describe('runConfigure — the interactive screen', () => {
             const { code, output } = await configure({ dir, config, checked: [] });
 
             assert.equal(code, 0);
-            assert.deepEqual((await readPresets(dir)).presets.default, []);
+            assert.deepEqual((await readPresets(dir)).presets.default.entries, []);
             assert.match(output, /- web/);
         } finally {
             await cleanup();
@@ -243,7 +257,7 @@ describe('runConfigure — the interactive screen', () => {
     test('warns about a preset entry the IDE no longer reports', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const config = { ...emptyConfig(), presets: { default: [{ name: 'gone', mode: 'run' }] } };
+            const config = { ...emptyConfig(), presets: { default: { entries: [{ name: 'gone', mode: 'run' }] } } };
             const { output } = await configure({ dir, config, checked: [] });
             assert.match(output, /"gone" is in the preset but no longer exists in the IDE/);
         } finally {
@@ -256,13 +270,13 @@ describe('runConfigure — the interactive screen', () => {
         try {
             const config = {
                 ...emptyConfig(),
-                presets: { backend: [{ name: 'api', mode: 'run' }] },
+                presets: { backend: { entries: [{ name: 'api', mode: 'run' }] } },
                 futureFlag: 7,
             };
             await configure({ dir, config, checked: ['web'], modes: ['run'] });
 
             const saved = await readPresets(dir);
-            assert.deepEqual(saved.presets.backend, [{ name: 'api', mode: 'run' }]);
+            assert.deepEqual(saved.presets.backend.entries, [{ name: 'api', mode: 'run' }]);
             assert.equal(saved.futureFlag, 7, 'unknown top-level fields survive');
         } finally {
             await cleanup();
@@ -293,7 +307,7 @@ describe('runConfigure — configurations named after prototype members', () => 
 
             assert.equal(code, 0);
             const saved = await readPresets(dir);
-            assert.deepEqual(saved.presets.default, [
+            assert.deepEqual(saved.presets.default.entries, [
                 { name: '__proto__', mode: 'debug' },
                 { name: 'constructor', mode: 'debug' },
             ]);
@@ -431,7 +445,7 @@ describe('runConfigure — refusals and cancellation', () => {
             const stdout = fakeStream(true);
             const code = await runConfigure({
                 configs: [],
-                config: { ...emptyConfig(), presets: { default: [{ name: 'gone', mode: 'run' }] } },
+                config: { ...emptyConfig(), presets: { default: { entries: [{ name: 'gone', mode: 'run' }] } } },
                 presetName: 'default',
                 projectRoot: dir,
                 log: createLogger({ stdout, stderr: stdout, env: { NO_COLOR: '1' } }),
@@ -451,7 +465,7 @@ describe('runConfigure — refusals and cancellation', () => {
 
 describe('runConfigure — custom commands', () => {
     const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
-    const withSeed = () => ({ ...emptyConfig(), presets: { default: [seed] } });
+    const withSeed = () => ({ ...emptyConfig(), presets: { default: { entries: [seed] } } });
     const NAME = 'Name (it titles the terminal tab; empty to go back)';
     const FIRST = 'Command (empty to go back)';
 
@@ -484,7 +498,7 @@ describe('runConfigure — custom commands', () => {
                 name: '⌘ seed db — npm i && npm run seed', value: newChoiceValue(0), checked: true, editable: true,
             });
             assert.equal(list.active, list.choices.length - 1);
-            assert.deepEqual((await readPresets(dir)).presets.default, [
+            assert.deepEqual((await readPresets(dir)).presets.default.entries, [
                 { name: 'web', mode: 'run' },
                 { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] },
             ]);
@@ -502,7 +516,7 @@ describe('runConfigure — custom commands', () => {
                 steps: [{ action: 'new' }, { action: 'new' }],
                 inputs: ['a', 'echo a', '', 'b', 'echo b', ''],
             });
-            const saved = (await readPresets(dir)).presets.default;
+            const saved = (await readPresets(dir)).presets.default.entries;
             assert.deepEqual(saved.map((entry) => entry.name), ['a', 'b']);
         } finally {
             await cleanup();
@@ -541,7 +555,7 @@ describe('runConfigure — custom commands', () => {
             });
 
             assert.deepEqual(rejected, ['"web" is the name of a run configuration; pick a different name']);
-            assert.equal((await readPresets(dir)).presets.default[0].name, 'seed db');
+            assert.equal((await readPresets(dir)).presets.default.entries[0].name, 'seed db');
         } finally {
             await cleanup();
         }
@@ -558,7 +572,7 @@ describe('runConfigure — custom commands', () => {
             assert.deepEqual(rejected, [], 'the name is free again: nothing was added');
             assert.deepEqual(customAsked.slice(0, 2), [NAME, FIRST]);
             assert.equal(asked.filter((a) => a.type === 'checkbox').length, 3);
-            assert.deepEqual((await readPresets(dir)).presets.default, [
+            assert.deepEqual((await readPresets(dir)).presets.default.entries, [
                 { name: 'seed', mode: 'terminal', commands: ['npm i'] },
             ]);
             assert.match(output, /\+ seed/);
@@ -579,7 +593,7 @@ describe('runConfigure — custom commands', () => {
                 'a command cannot contain control characters',
                 'a command cannot contain control characters',
             ]);
-            assert.deepEqual((await readPresets(dir)).presets.default[0].commands, ['npm i']);
+            assert.deepEqual((await readPresets(dir)).presets.default.entries[0].commands, ['npm i']);
         } finally {
             await cleanup();
         }
@@ -589,7 +603,7 @@ describe('runConfigure — custom commands', () => {
         const { dir, cleanup } = await tmpProject();
         try {
             await configure({ dir, steps: [{ action: 'new' }], inputs: ['  seed db ', '  npm i  ', ''] });
-            assert.deepEqual((await readPresets(dir)).presets.default, [
+            assert.deepEqual((await readPresets(dir)).presets.default.entries, [
                 { name: 'seed db', mode: 'terminal', commands: ['npm i'] },
             ]);
         } finally {
@@ -618,7 +632,7 @@ describe('runConfigure — custom commands', () => {
         try {
             const { output } = await configure({ dir, config: withSeed(), checked: [] });
 
-            assert.deepEqual((await readPresets(dir)).presets.default, []);
+            assert.deepEqual((await readPresets(dir)).presets.default.entries, []);
             assert.match(output, /- seed db/);
         } finally {
             await cleanup();
@@ -636,7 +650,7 @@ describe('runConfigure — custom commands', () => {
             });
 
             assert.deepEqual(rejected, ['"seed db" is already a custom command in this preset']);
-            assert.deepEqual((await readPresets(dir)).presets.default.map((entry) => entry.name), ['other']);
+            assert.deepEqual((await readPresets(dir)).presets.default.entries.map((entry) => entry.name), ['other']);
         } finally {
             await cleanup();
         }
@@ -675,7 +689,7 @@ describe('runConfigure — custom commands', () => {
             assert.equal(code, 0);
             assert.deepEqual(asked[0].choices, []);
             assert.match(output, /no run configurations/);
-            assert.equal((await readPresets(dir)).presets.default[0].name, 'seed db');
+            assert.equal((await readPresets(dir)).presets.default.entries[0].name, 'seed db');
         } finally {
             await cleanup();
         }
@@ -684,13 +698,13 @@ describe('runConfigure — custom commands', () => {
 
 describe('runConfigure — editing custom commands from the list', () => {
     const seed = { name: 'seed db', mode: 'terminal', commands: ['npm i', 'npm run seed'] };
-    const withSeed = () => ({ ...emptyConfig(), presets: { default: [{ name: 'web', mode: 'run' }, seed] } });
+    const withSeed = () => ({ ...emptyConfig(), presets: { default: { entries: [{ name: 'web', mode: 'run' }, seed] } } });
     const SEED = customChoiceValue(1);
     const editSeed = [{ action: 'edit', value: SEED }];
 
     /** @param {object} opts */
     const edit = (opts) => configure({ config: withSeed(), steps: editSeed, ...opts });
-    const saved = async (dir) => (await readPresets(dir)).presets.default;
+    const saved = async (dir) => (await readPresets(dir)).presets.default.entries;
 
     test('e opens the entry, and leaving it untouched changes nothing', async () => {
         const { dir, cleanup } = await tmpProject();
@@ -776,7 +790,7 @@ describe('runConfigure — editing custom commands from the list', () => {
             ];
             const { inputConfigs } = await configure({
                 dir,
-                config: { ...emptyConfig(), presets: { default: twins } },
+                config: { ...emptyConfig(), presets: { default: { entries: twins } } },
                 steps: [{ action: 'edit', value: customChoiceValue(1) }],
                 menus: ['1. echo second', 'Change'],
                 inputs: ['echo edited'],
@@ -792,7 +806,7 @@ describe('runConfigure — editing custom commands from the list', () => {
     test('a rename to a run configuration or to another custom name is refused; its own name is fine', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const config = { ...emptyConfig(), presets: { default: [seed, { ...seed, name: 'other' }] } };
+            const config = { ...emptyConfig(), presets: { default: { entries: [seed, { ...seed, name: 'other' }] } } };
             const { rejected, output } = await configure({
                 dir,
                 config,
@@ -891,7 +905,7 @@ describe('runConfigure — editing custom commands from the list', () => {
     test('an entry called like a run configuration can keep its name', async () => {
         const { dir, cleanup } = await tmpProject();
         try {
-            const config = { ...emptyConfig(), presets: { default: [{ ...seed, name: 'web' }] } };
+            const config = { ...emptyConfig(), presets: { default: { entries: [{ ...seed, name: 'web' }] } } };
             const { rejected, output } = await configure({
                 dir,
                 config,
@@ -940,7 +954,7 @@ describe('runConfigure — editing custom commands from the list', () => {
             const three = { ...seed, commands: ['a', 'b', 'c'] };
             const { menuDefaults } = await edit({
                 dir,
-                config: { ...emptyConfig(), presets: { default: [{ name: 'web', mode: 'run' }, three] } },
+                config: { ...emptyConfig(), presets: { default: { entries: [{ name: 'web', mode: 'run' }, three] } } },
                 menus: ['1. a', 'Move down', '2. a', 'Move down', '3. a'],
             });
             assert.deepEqual(menuDefaults, [
@@ -964,7 +978,7 @@ describe('runConfigure — editing custom commands from the list', () => {
             const { editAsked } = await configure({
                 dir,
                 columns: 60,
-                config: { ...emptyConfig(), presets: { default: [{ name: 'web', mode: 'run' }, long] } },
+                config: { ...emptyConfig(), presets: { default: { entries: [{ name: 'web', mode: 'run' }, long] } } },
                 steps: editSeed,
                 menus: [`1. npm run ${'x'.repeat(200)}`],
             });

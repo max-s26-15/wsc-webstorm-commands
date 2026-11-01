@@ -9,7 +9,7 @@
 import { input, select } from '@inquirer/prompts';
 
 import { DEFAULT_MODE, MODES } from '../modes.js';
-import { hasPreset, setPreset, writePresets } from '../presets/store.js';
+import { getPreset, setPreset, writePresets } from '../presets/store.js';
 import {
     addCustomEntry,
     applyAnswersToPreset,
@@ -84,7 +84,7 @@ export async function runConfigure(opts) {
         return 1;
     }
 
-    const before = hasPreset(config, presetName) ? config.presets[presetName] : [];
+    const before = getPreset(config, presetName);
     const { choices, stale } = buildInitialSelection(configs, before);
 
     // Warn before any early exit: an IDE reporting nothing at all is precisely when a
