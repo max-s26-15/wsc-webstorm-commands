@@ -377,8 +377,8 @@ OS terminal tabs open stage by stage, so an emulator may put a later stage in a 
 guarantee is the order and a tab per entry, not one window. There, "started" means the emulator
 opened the tab, not that the command inside it worked. When everything runs in this one terminal,
 `wsc` starts each stage once the previous stage's processes have started, without waiting for them to
-end. A process that could not start stops the later stages, and one that exits later only
-affects the final exit code. Ctrl-C there stops the processes as it always has.
+end. An entry of a preset with a pause that could not start stops what is behind that pause, and a
+process that exits later only affects the final exit code. Ctrl-C there stops the processes as it always has.
 
 ## Debugging (`:debug`)
 
@@ -435,10 +435,12 @@ while the other entries of the same launch keep their own tab kind. It is what
 also be kept in a preset:
 
 ```json
-"default": [
-  { "name": "test", "mode": "run" },
-  { "name": "test:watch", "mode": "terminal" }
-]
+"default": {
+  "entries": [
+    { "name": "test", "mode": "run" },
+    { "name": "test:watch", "mode": "terminal" }
+  ]
+}
 ```
 
 `wsc test:watch:terminal` asks for the same on the command line, and `wsc -c` offers it as the third

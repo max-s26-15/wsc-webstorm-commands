@@ -61,6 +61,25 @@ export class AmbiguousProjectError extends McpToolError {
 }
 
 /**
+ * Whether a rejected call means the IDE is out of reach, rather than a bug in wsc.
+ *
+ * Three shapes, none of them related by class: the SDK's own McpError (a closed connection, a
+ * timeout), fetch's `TypeError: fetch failed` (nothing listening any more), and the SDK's
+ * StreamableHTTPError (an HTTP status, such as 404 for a session the IDE has dropped), whose
+ * `name` is plain "Error", so it is told by its constructor. A TypeError with any other
+ * message is a defect, and must keep its stack.
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isIdeGone(err) {
+    if (!(err instanceof Error)) return false;
+    return err.name === 'McpError'
+        || (err instanceof TypeError && err.message === 'fetch failed')
+        || err.constructor.name === 'StreamableHTTPError';
+}
+
+/**
  * The MCP session could not be opened at all.
  *
  * Distinct from every error above, which are about one *tool call*: this is the transport

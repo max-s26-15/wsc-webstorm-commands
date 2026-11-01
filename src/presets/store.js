@@ -255,6 +255,21 @@ export function parseConfig(text, filePath = configPath('.')) {
         throw new PresetConfigError(filePath, '"presets" must be an object');
     }
 
+    // The one malformed legacy shape the validator could only misdescribe: wrapped by migration
+    // 1 → 2, its perfectly good "entries" would be reported as not being a list. Adding a pause
+    // to an existing file by hand, from the README's fragment, lands exactly here.
+    if ((version ?? 0) < 2) {
+        for (const [name, preset] of Object.entries(presets ?? {})) {
+            if (preset !== null && typeof preset === 'object' && Array.isArray(/** @type {any} */ (preset).entries)) {
+                throw new PresetConfigError(
+                    filePath,
+                    `preset "${name}" has the version 2 layout, but the file says ${version === undefined ? 'no version' : `version ${version}`}: ` +
+                        'set "version": 2 and put every preset in that layout',
+                );
+            }
+        }
+    }
+
     // A file with no version predates versioning, so it starts at 0 and gets migrated.
     const migrated = migrateConfig(
         {

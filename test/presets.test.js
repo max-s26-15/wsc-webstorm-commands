@@ -991,12 +991,24 @@ describe('schema 2 — preset metadata', () => {
 
     test('a malformed legacy preset is reported by the validator, not swallowed by the migration', () => {
         for (const version of [0, 1]) {
-            for (const preset of ['x', 5, null, { entries: [] }]) {
+            for (const preset of ['x', 5, null, {}]) {
                 assert.throws(
                     () => parseConfig(JSON.stringify({ version, presets: { a: preset } }), '/p/c.json'),
                     (err) => err instanceof PresetConfigError && /preset "a" "entries" must be an array/.test(err.detail),
                 );
             }
+        }
+    });
+
+    test('the new layout under an old version says what is actually wrong', () => {
+        for (const head of ['', '"version":0,', '"version":1,']) {
+            assert.throws(
+                () => parseConfig(`{${head}"presets":{"a":{"entries":[{"name":"x"}],"waitAfterSeconds":5}}}`, '/p/c.json'),
+                (err) => err instanceof PresetConfigError
+                    && /preset "a"/.test(err.detail)
+                    && /"version": 2/.test(err.detail)
+                    && !/must be an array/.test(err.detail),
+            );
         }
     });
 

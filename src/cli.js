@@ -40,7 +40,7 @@ import { readIdeaRunConfigs } from './fallback/ideaRunConfigs.js';
 import { runTerminalFallback } from './fallback/terminalFallback.js';
 import { LIST_WITHOUT_IDE_LABEL, listFromDisk, listFromIde } from './list.js';
 import { createLogger } from './log.js';
-import { connectMcp } from './mcp/client.js';
+import { connectMcp, isIdeGone } from './mcp/client.js';
 import { discoverPort, parsePort } from './mcp/discovery.js';
 import { DEBUG_CONFIGURATION_TOOL, TERMINAL_TAB_TOOL, runExecutionPlan } from './mcp/execute.js';
 import { DEFAULT_MODE } from './modes.js';
@@ -324,10 +324,11 @@ async function executePlan(plan, ctx) {
         barriers,
         signal: interrupt?.signal,
     }).catch((err) => {
-        // KNOWN_ERRORS already keeps this from becoming a stack trace, but only here does
+        // KNOWN_ERRORS already keeps an McpError from becoming a stack trace, but only here does
         // the CLI know enough to say what it means: the tabs that opened are unaffected,
-        // and the run can simply be repeated for the rest.
-        if (err instanceof Error && err.name === 'McpError') {
+        // and the run can simply be repeated for the rest. A pause makes this window long
+        // enough to hit, by quitting the IDE. Anything else is a defect, and keeps its stack.
+        if (isIdeGone(err)) {
             throw new WscError(
                 `the IDE stopped answering mid-launch (${err.message}).\n` +
                     '  Whatever already started is unaffected — check that WebStorm is still\n' +

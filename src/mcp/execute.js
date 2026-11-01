@@ -319,6 +319,7 @@ export async function runExecutionPlan(calls, opts) {
                 if (!(err instanceof Error) || err.name !== 'McpToolError') {
                     if (startedSoFar.length > 0) {
                         log.warn(`already started: ${startedSoFar.map((c) => c.name).join(', ')}`);
+                        log.warn(`not started: ${calls.slice(index).map((c) => c.name).join(', ')}`);
                     }
                     throw err;
                 }

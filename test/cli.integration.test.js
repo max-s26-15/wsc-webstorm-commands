@@ -15,6 +15,8 @@ import path from 'node:path';
 import { runCli } from '../src/cli.js';
 import { BASH_SCRIPT, ZSH_SCRIPT } from '../src/completion/scripts.js';
 import { formatRunConfigs } from '../src/list.js';
+import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
 import { McpToolError } from '../src/mcp/client.js';
 import { createControlledWait } from '../test-utils/controlled-wait.js';
 import { fakeSignals } from '../test-utils/fake-child.js';
@@ -1036,6 +1038,34 @@ describe('preset pauses, end to end', { timeout: 10000 }, () => {
             await t.cleanup();
         }
     });
+
+    for (const [what, failure] of [
+        ['a dead socket', () => new TypeError('fetch failed')],
+        ['a session the IDE no longer knows', () => new StreamableHTTPError(404, 'session gone')],
+    ]) {
+        test(`${what} during the pause: a sentence and not a stack trace, naming what did not start`, async () => {
+            const t = await start(['--preset', 'infra', 'api', 'back'], {
+                deps: {
+                    callTool: (name, args) => {
+                        if (name === 'execute_run_configuration' && args.configurationName === 'api') throw failure();
+                        return FIXTURE;
+                    },
+                },
+            });
+            try {
+                (await t.clock.next()).release();
+                assert.equal(await t.running, 1);
+                const err = t.h.stderr();
+                assert.match(err, /the IDE stopped answering mid-launch/);
+                assert.match(err, /already started: web/);
+                assert.match(err, /not started: api, addon-client/);
+                assert.equal(t.h.closed, true);
+                assert.equal(t.signals.handlers.length, 0);
+            } finally {
+                await t.cleanup();
+            }
+        });
+    }
 
     test('Ctrl-C during the pause: 130, nothing more launched, the session closed', async () => {
         const t = await start(['--preset', 'infra', 'api']);
