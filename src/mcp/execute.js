@@ -8,6 +8,7 @@
  * src/mcp/client.js. Nothing here decides anything — it only builds calls and issues
  * them.
  */
+import { runSchedule } from '../exec/runSchedule.js';
 import { McpToolError } from './client.js';
 
 /** Opens (or reuses) a native Run/Debug tab named after the configuration. */
@@ -159,7 +160,14 @@ export function terminalCommandCall(command, opts = {}) {
 /**
  * @typedef {import('../exec/planBuilder.js').McpCall} McpCall
  * @typedef {{ call: McpCall, reason: string }} LaunchFailure
- * @typedef {{ started: McpCall[], failed: LaunchFailure[] }} ExecutionReport
+ * @typedef {{
+ *   started: McpCall[],
+ *   failed: LaunchFailure[],
+ *   skipped: McpCall[],
+ *   blockedBy?: string,
+ *   cancelled: boolean,
+ * }} ExecutionReport - `skipped` was never attempted; `blockedBy` is the preset whose failed
+ *   entry stopped the run at its pause
  */
 
 /**
@@ -236,6 +244,10 @@ function describeMode(call) {
  * error) is rethrown: the remaining calls would fail identically, each only after the
  * full call timeout — but not before saying what did start, so that is not lost.
  *
+ * **A pause is the one thing that stops the rest.** What is behind a preset's pause depends on
+ * that preset, so a failed member stops it there, after the preset's other members have had
+ * their try. Without a pause the rule above stands. Between the two is runSchedule().
+ *
  * @param {McpCall[]} calls - from buildExecutionPlan()
  * @param {object} opts
  * @param {McpClient} opts.client
@@ -244,67 +256,98 @@ function describeMode(call) {
  *   titles a Terminal tab after the MCP client that opened it and offers no other way to
  *   name it. Without it every call shares `client`, and the tabs are all titled "wsc".
  * @param {{ info: (...a: any[]) => void, error: (...a: any[]) => void, warn: (...a: any[]) => void, debug: (...a: any[]) => void }} [opts.log]
+ * @param {import('../exec/schedule.js').PresetBarrier[]} [opts.barriers]
+ * @param {import('../exec/runSchedule.js').Wait} [opts.wait] - injected in tests
+ * @param {AbortSignal} [opts.signal] - Ctrl-C: what has not started yet never does
  * @returns {Promise<ExecutionReport>}
  */
 export async function runExecutionPlan(calls, opts) {
-    const { client } = opts;
+    const { client, signal } = opts;
     const log = opts.log ?? { info() {}, error() {}, warn() {}, debug() {} };
 
+    /** What has started so far, across stages: what an abort on a dead transport names. */
     /** @type {McpCall[]} */
-    const started = [];
-    /** @type {LaunchFailure[]} */
-    const failed = [];
-    /** Shared by every sessionFor() of this run, so a refusal is learned once. */
+    const startedSoFar = [];
+    /** Shared by every sessionFor() of this run, stage after stage, so a refusal is learned once. */
     const naming = { unavailable: false };
 
-    for (const call of calls) {
-        // Opened per tab and closed straight after: the command keeps running once the
-        // session is gone (measured — a file touched eight seconds after the session was
-        // closed still appeared), and only the name matters.
-        const session = await sessionFor(call, opts, log, naming);
-        try {
-            const result = await session.callTool(call.tool, call.arguments, { timeoutMs: call.timeoutMs });
-            log.debug(`${call.tool} → ${typeof result === 'string' ? result : JSON.stringify(result)}`);
+    /**
+     * @param {number} start
+     * @param {number} end - exclusive
+     * @returns {Promise<import('../exec/runSchedule.js').BatchReport>}
+     */
+    const launchBatch = async (start, end) => {
+        /** @type {import('../exec/runSchedule.js').BatchReport} */
+        const report = { started: [], failed: [] };
 
-            const reason = launchFailureReason(result);
-            if (reason !== null) {
-                failed.push({ call, reason });
-                log.error(`${call.name}: ${reason}`);
-                continue;
-            }
+        for (let index = start; index < end; index++) {
+            if (signal?.aborted) break;
+            const call = calls[index];
 
-            started.push(call);
-            log.info(`started ${call.name}${describeMode(call)}`);
-        } catch (err) {
-            // A bounded call that ran out of time means the command is still going, which
-            // for a dev server is success — the tab is open and the process is alive.
-            if (isRequestTimeout(err) && call.timeoutMs !== undefined) {
-                started.push(call);
-                log.info(`started ${call.name}${describeMode(call)} — still running`);
-                continue;
-            }
-            // Matched by name, not by instanceof, for the same reason KNOWN_ERRORS in
-            // src/cli.js does: it is the exact class that means "the IDE rejected *this*
-            // configuration". Its subclass AmbiguousProjectError deliberately falls
-            // through to the abort below — a project the IDE cannot identify is not a
-            // property of one entry, and every remaining call would repeat it verbatim.
-            const toolError = /** @type {McpToolError} */ (err);
-            if (!(err instanceof Error) || err.name !== 'McpToolError') {
-                if (started.length > 0) {
-                    log.warn(`already started: ${started.map((c) => c.name).join(', ')}`);
+            // Opened per tab and closed straight after: the command keeps running once the
+            // session is gone (measured — a file touched eight seconds after the session was
+            // closed still appeared), and only the name matters.
+            const session = await sessionFor(call, opts, log, naming);
+            try {
+                // A handshake can take seconds, and Ctrl-C during it must not open the tab.
+                if (signal?.aborted) break;
+
+                const result = await session.callTool(call.tool, call.arguments, { timeoutMs: call.timeoutMs });
+                log.debug(`${call.tool} → ${typeof result === 'string' ? result : JSON.stringify(result)}`);
+
+                const reason = launchFailureReason(result);
+                if (reason !== null) {
+                    report.failed.push({ index, reason });
+                    log.error(`${call.name}: ${reason}`);
+                    continue;
                 }
-                throw err;
-            }
-            failed.push({ call, reason: toolError.detail });
-            log.error(`${call.name}: ${toolError.detail}`);
-        } finally {
-            // `await` on the call above is inside this try, so this never runs while it is
-            // still in flight — the trap withMcpSession() in src/cli.js documents.
-            if (session !== client) await session.close().catch(() => {});
-        }
-    }
 
-    return { started, failed };
+                report.started.push(index);
+                startedSoFar.push(call);
+                log.info(`started ${call.name}${describeMode(call)}`);
+            } catch (err) {
+                // A bounded call that ran out of time means the command is still going, which
+                // for a dev server is success — the tab is open and the process is alive.
+                if (isRequestTimeout(err) && call.timeoutMs !== undefined) {
+                    report.started.push(index);
+                    startedSoFar.push(call);
+                    log.info(`started ${call.name}${describeMode(call)} — still running`);
+                    continue;
+                }
+                // Matched by name, not by instanceof, for the same reason KNOWN_ERRORS in
+                // src/cli.js does: it is the exact class that means "the IDE rejected *this*
+                // configuration". Its subclass AmbiguousProjectError deliberately falls
+                // through to the abort below — a project the IDE cannot identify is not a
+                // property of one entry, and every remaining call would repeat it verbatim.
+                const toolError = /** @type {McpToolError} */ (err);
+                if (!(err instanceof Error) || err.name !== 'McpToolError') {
+                    if (startedSoFar.length > 0) {
+                        log.warn(`already started: ${startedSoFar.map((c) => c.name).join(', ')}`);
+                        log.warn(`not started: ${calls.slice(index).map((c) => c.name).join(', ')}`);
+                    }
+                    throw err;
+                }
+                report.failed.push({ index, reason: toolError.detail });
+                log.error(`${call.name}: ${toolError.detail}`);
+            } finally {
+                // `await` on the call above is inside this try, so this never runs while it is
+                // still in flight — the trap withMcpSession() in src/cli.js documents.
+                if (session !== client) await session.close().catch(() => {});
+            }
+        }
+
+        return report;
+    };
+
+    const report = await runSchedule(calls.length, opts.barriers ?? [], { launchBatch, wait: opts.wait, signal, log });
+
+    return {
+        started: report.started.map((index) => calls[index]),
+        failed: report.failed.map(({ index, reason }) => ({ call: calls[index], reason })),
+        skipped: report.skipped.map((index) => calls[index]),
+        ...(report.blockedBy === undefined ? {} : { blockedBy: report.blockedBy }),
+        cancelled: report.cancelled,
+    };
 }
 
 /**

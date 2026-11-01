@@ -9,9 +9,11 @@ plugin (tags `plugin-v*`). Format: [Keep a Changelog](https://keepachangelog.com
 ### Added
 - `wsc --stop` and `wsc --restart`: stop or restart what runs from the presets — every preset, the ones named with `--preset`, or single entries by name (custom commands too). A restart stays in the same Run, Debug or Terminal tab; an entry whose preset now gives it another mode is stopped and launched anew. Nothing is recorded: the IDE is asked what runs, every time. Needs wsc Companion 0.6.0.
 - Tab completion offers the presets' entries after `--stop` / `--restart`.
+- A pause after a preset (`t` in the `wsc -c` list, `waitAfterSeconds` in the file, 0 to 86400 seconds): `wsc --preset a b` starts `a`, waits, then starts `b`. A failed launch in `a` stops what is behind the pause, Ctrl-C during it exits 130, and it works on every path, including `--fallback=terminal`.
 
 ### Changed
 - Terminal tabs opened through wsc Companion carry a mark (the entry's kind, mode and inspector port), which is how `--stop` and `--restart` find them again.
+- The preset file is now schema version 2: a preset is an object, `{ "entries": [...] }`. Version 0 and 1 files keep loading, upgraded in memory on read and on disk at the next real write. An older `wsc` refuses a version 2 file.
 
 ## [plugin 0.6.0] - 2026-MM-DD
 

@@ -452,7 +452,7 @@ describe('runCli — --configure', () => {
         assert.equal(configured.length, 1);
         assert.equal(configured[0].configs.length, 13);
         assert.equal(configured[0].presetName, 'default');
-        assert.deepEqual(configured[0].config.presets.default, [{ name: 'api', mode: 'debug' }]);
+        assert.deepEqual(configured[0].config.presets.default.entries, [{ name: 'api', mode: 'debug' }]);
         assert.deepEqual(executed, [], 'configuring must never launch anything');
     });
 
@@ -1174,7 +1174,7 @@ describe('runCli — unreachable IDE: retry and terminal fallback', () => {
         );
         const ctx = fellBack[0];
         assert.equal(ctx.presetName, 'dev');
-        assert.deepEqual(ctx.presetEntries, [{ name: 'web', mode: 'run' }]);
+        assert.deepEqual(ctx.presetGroups, [{ name: 'dev', entries: [{ name: 'web', mode: 'run' }], waitAfterSeconds: 0 }]);
         assert.equal(ctx.debugPortBase, 9300);
         assert.ok(ctx.projectRoot.length > 0);
 
@@ -1617,7 +1617,7 @@ describe('runCli — --delete-preset', () => {
 
         assert.equal(result.code, 0);
         assert.equal(Object.hasOwn(result.file.presets, 'old-one'), false);
-        assert.deepEqual(result.file.presets.default, [{ name: 'api', mode: 'run' }]);
+        assert.deepEqual(result.file.presets.default.entries, [{ name: 'api', mode: 'run' }]);
         assert.deepEqual(result.file.extra, { kept: true }, 'unknown top-level keys survive');
         assert.equal(result.file.defaultPreset, 'default');
         assert.equal(result.stdout, '', 'every message goes to stderr');

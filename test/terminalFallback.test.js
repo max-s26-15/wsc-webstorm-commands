@@ -5,6 +5,8 @@ import { runTerminalFallback } from '../src/fallback/terminalFallback.js';
 import { NPM_TYPE } from '../src/fallback/ideaRunConfigs.js';
 import { createLogger } from '../src/log.js';
 import { fakeStream } from '../test-utils/capture.js';
+import { createControlledWait } from '../test-utils/controlled-wait.js';
+import { fakeSignals } from '../test-utils/fake-child.js';
 
 const ROOT = '/projects/demo-app';
 
@@ -53,7 +55,7 @@ const run = async (opts = {}) => {
     const adapter = { id: 'gnome-terminal', opens: 'tab' };
     const code = await runTerminalFallback({
         presetName: 'default',
-        presetEntries: opts.presetEntries ?? [],
+        presetGroups: [{ name: 'default', entries: opts.presetEntries ?? [], waitAfterSeconds: 0 }],
         positionals: opts.positionals ?? [],
         projectRoot: ROOT,
         debugPortBase: opts.debugPortBase ?? 9229,
@@ -252,7 +254,7 @@ describe('runTerminalFallback — --dry-run and the pool', () => {
         const stderr = fakeStream();
         const code = await runTerminalFallback({
             presetName: 'default',
-            presetEntries: [],
+            presetGroups: [],
             positionals: ['web'],
             projectRoot: ROOT,
             debugPortBase: 9229,
@@ -272,7 +274,7 @@ describe('runTerminalFallback — --dry-run and the pool', () => {
         const stderr = fakeStream();
         await runTerminalFallback({
             presetName: 'default',
-            presetEntries: [],
+            presetGroups: [],
             positionals: ['web:debug'],
             projectRoot: ROOT,
             debugPortBase: 9229,
@@ -341,5 +343,213 @@ describe('runTerminalFallback — custom command entries', () => {
     test('with no terminal emulator the single-window pool gets the same tab', async () => {
         const { pooled } = await run({ presetEntries: [seed], terminal: false });
         assert.equal(pooled[0][0].command, 'npm i && npm run seed');
+    });
+});
+
+describe('runTerminalFallback — pauses between presets', { timeout: 5000 }, () => {
+    const custom = (name, command = `echo ${name}`) => ({ name, mode: 'terminal', commands: [command] });
+    const INFRA = { name: 'infra', entries: [custom('db')], waitAfterSeconds: 10 };
+    const API = { name: 'api', entries: [custom('srv')], waitAfterSeconds: 0 };
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+    /** Like `run`, but the test holds the clock and can see the run in flight. */
+    const start = (opts = {}) => {
+        const stdout = fakeStream();
+        const stderr = fakeStream();
+        const clock = createControlledWait();
+        const signals = fakeSignals();
+        const opened = [];
+        let findTerminalCalls = 0;
+        const pooled = [];
+        const running = runTerminalFallback({
+            presetName: (opts.presetGroups ?? [INFRA, API]).map((group) => group.name).join(' + '),
+            presetGroups: opts.presetGroups ?? [INFRA, API],
+            positionals: opts.positionals ?? [],
+            projectRoot: ROOT,
+            debugPortBase: 9229,
+            dryRun: opts.dryRun,
+            env: {},
+            log: createLogger({ stdout, stderr, env: { NO_COLOR: '1' } }),
+            readConfigs: async () => opts.configs ?? CONFIGS,
+            findTerminal: async () => {
+                findTerminalCalls++;
+                return opts.terminal === false ? null : { adapter: { id: 'gnome-terminal', opens: 'tab' }, bin: {} };
+            },
+            openTabs: opts.openTabs ?? (async (tabs) => { opened.push(tabs.map((tab) => tab.name)); }),
+            runPool: opts.runPool ?? (async (tabs, poolOpts) => { pooled.push({ tabs, opts: poolOpts }); return 0; }),
+            findBusyPorts: async () => [],
+            wait: opts.wait ?? clock.wait,
+            process: signals,
+        });
+        return { running, clock, signals, opened, pooled, stdout, stderr, finds: () => findTerminalCalls };
+    };
+
+    test('opens each stage after the pause before it, finding the terminal once', async () => {
+        const h = start();
+        const pending = await h.clock.next();
+        assert.equal(pending.ms, 10000);
+        assert.deepEqual(h.opened, [['db']]);
+
+        pending.release();
+        assert.equal(await h.running, 0);
+        assert.deepEqual(h.opened, [['db'], ['srv']]);
+        assert.equal(h.finds(), 1);
+        assert.equal(h.signals.handlers.length, 0, 'the SIGINT handler is gone');
+        assert.match(h.stderr.text(), /waiting 10s after preset "infra"/);
+        assert.match(h.stderr.text(), /started 2 configuration/);
+    });
+
+    test('with no pause it is one package, as it has always been', async () => {
+        const h = start({ presetGroups: [{ ...INFRA, waitAfterSeconds: 0 }, API] });
+        assert.equal(await h.running, 0);
+        assert.deepEqual(h.opened, [['db', 'srv']]);
+        assert.deepEqual(h.clock.calls, []);
+    });
+
+    test('the timer starts only once opening has finished settling', async () => {
+        /** @type {() => void} */
+        let settled = () => {};
+        const h = start({
+            openTabs: () => new Promise((resolve) => { settled = resolve; }),
+        });
+        await tick();
+        await tick();
+        assert.deepEqual(h.clock.calls, []);
+
+        settled();
+        (await h.clock.next()).release();
+        await tick();
+        settled();
+        assert.equal(await h.running, 0);
+    });
+
+    test('a dry run prints the pause between the commands, and starts nothing', async () => {
+        const never = async () => assert.fail('a dry run must not touch this');
+        const h = start({ dryRun: true, wait: never, openTabs: never, runPool: never });
+        assert.equal(await h.running, 0);
+
+        const text = h.stdout.text();
+        assert.ok(text.indexOf('→ db') < text.indexOf('→ wait 10s after preset "infra"\n→ srv'), text);
+        assert.equal(text.match(/→ wait 10s/g).length, 2, 'once in the plan, once in the commands');
+        assert.equal(h.finds(), 0);
+    });
+
+    test('a bad name in the last preset means nothing opens', async () => {
+        const h = start({
+            presetGroups: [INFRA, { name: 'x', entries: [{ name: 'nope', mode: 'run' }], waitAfterSeconds: 0 }],
+        });
+        await assert.rejects(h.running, /unknown run configuration "nope"/);
+        assert.deepEqual(h.opened, []);
+        assert.deepEqual(h.clock.calls, []);
+    });
+
+    test('a command that cannot be rebuilt in the last preset means nothing opens', async () => {
+        const h = start({
+            presetGroups: [INFRA, { name: 'x', entries: [{ name: 'odd', mode: 'run' }], waitAfterSeconds: 0 }],
+            configs: [{ name: 'odd', description: 'x', type: 'somethingElse' }],
+        });
+        await assert.rejects(h.running);
+        assert.deepEqual(h.opened, []);
+    });
+
+    test('a failure to open stops what is behind it, with no timer', async () => {
+        const opened = [];
+        const h = start({
+            presetGroups: [
+                { name: 'first', entries: [custom('a')], waitAfterSeconds: 1 },
+                { name: 'second', entries: [custom('b')], waitAfterSeconds: 2 },
+                { name: 'third', entries: [custom('c')], waitAfterSeconds: 0 },
+            ],
+            openTabs: async (tabs) => {
+                opened.push(tabs.map((tab) => tab.name));
+                if (opened.length === 2) throw new Error('emulator died');
+            },
+        });
+        (await h.clock.next()).release();
+        await assert.rejects(h.running, /emulator died/);
+
+        assert.deepEqual(opened, [['a'], ['b']]);
+        assert.deepEqual(h.clock.calls, [1000]);
+        const err = h.stderr.text();
+        assert.match(err, /already open[^\n]*a/);
+        assert.match(err, /may[^\n]*b/);
+        assert.match(err, /not started[^\n]*c/);
+        assert.doesNotMatch(err, /started 2/);
+        assert.equal(h.signals.handlers.length, 0);
+    });
+
+    test('a failure with no pauses reads as it always has', async () => {
+        const h = start({
+            presetGroups: [{ ...INFRA, waitAfterSeconds: 0 }, API],
+            openTabs: async () => { throw new Error('emulator died'); },
+        });
+        await assert.rejects(h.running, /emulator died/);
+        assert.doesNotMatch(h.stderr.text(), /not started/);
+    });
+
+    test('Ctrl-C during the pause: 130, what is open stays, the rest never opens', async () => {
+        const h = start();
+        const pending = await h.clock.next();
+        h.signals.emit();
+        pending.release();
+
+        assert.equal(await h.running, 130);
+        assert.deepEqual(h.opened, [['db']]);
+        assert.match(h.stderr.text(), /not started[^\n]*srv/);
+        assert.equal(h.signals.handlers.length, 0);
+    });
+
+    test('the pool gets the whole list, the barriers and the wait, in one call', async () => {
+        const h = start({ terminal: false });
+        assert.equal(await h.running, 0);
+
+        assert.equal(h.pooled.length, 1);
+        assert.deepEqual(h.pooled[0].tabs.map((tab) => tab.name), ['db', 'srv']);
+        assert.deepEqual(h.pooled[0].opts.barriers, [{ after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] }]);
+        assert.equal(h.pooled[0].opts.wait, h.clock.wait);
+        assert.equal(h.pooled[0].opts.process, h.signals);
+        assert.equal(h.signals.handlers.length, 0, 'the pool has its own handler; this path adds none');
+    });
+
+    test('an entry two presets share opens once, in the first, and the second keeps its pause', async () => {
+        const h = start({
+            presetGroups: [
+                { name: 'a', entries: [custom('db')], waitAfterSeconds: 0 },
+                { name: 'dup', entries: [custom('db')], waitAfterSeconds: 5 },
+                API,
+            ],
+        });
+        (await h.clock.next()).release();
+        assert.equal(await h.running, 0);
+        assert.deepEqual(h.opened, [['db'], ['srv']]);
+        assert.deepEqual(h.clock.calls, [5000]);
+    });
+
+    test('custom commands need no catalogue, whichever preset they are in', async () => {
+        const h = start({ configs: [] });
+        (await h.clock.next()).release();
+        assert.equal(await h.running, 0);
+    });
+
+    test('a token is split against the names on disk, and lands after the last pause', async () => {
+        const h = start({ positionals: ['api > repro:stale-job:debug'] });
+        (await h.clock.next()).release();
+        assert.equal(await h.running, 0);
+        assert.deepEqual(h.opened, [['db'], ['srv', 'api > repro:stale-job:debug']]);
+    });
+
+    test('inspector ports count up across a pause', async () => {
+        /** @type {any[]} */
+        const tabs = [];
+        const h = start({
+            presetGroups: [
+                { name: 'a', entries: [{ name: 'web', mode: 'debug' }], waitAfterSeconds: 1 },
+                { name: 'b', entries: [{ name: 'api', mode: 'debug' }], waitAfterSeconds: 0 },
+            ],
+            openTabs: async (opened) => { tabs.push(...opened); },
+        });
+        (await h.clock.next()).release();
+        assert.equal(await h.running, 0);
+        assert.deepEqual(tabs.map((tab) => tab.debugPort), [9229, 9230]);
     });
 });

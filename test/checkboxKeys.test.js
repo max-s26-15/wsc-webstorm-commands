@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { pressKey } from '../src/ui/checkboxKeys.js';
+import { listKeys, listKeyRows, pressKey } from '../src/ui/checkboxKeys.js';
 
 /** @param {string} name @param {object} [extra] */
 const key = (name, extra = {}) => ({ name, ctrl: false, shift: false, meta: false, ...extra });
@@ -116,5 +116,45 @@ describe('pressKey — leaving the list', () => {
         for (const name of ['space', 'down', 'up', 'e', '1', 'a', 'i']) {
             assert.deepEqual(pressKey(empty, key(name)), { state: empty }, name);
         }
+    });
+});
+
+describe('pressKey — t, the pause of the whole preset', () => {
+    test('leaves the list, on any row', () => {
+        assert.deepEqual(pressKey({ items: items(), active: 1 }, key('t')).outcome, { action: 'pause' });
+    });
+
+    test('works in an empty list', () => {
+        assert.deepEqual(pressKey({ items: [], active: 0 }, key('t')).outcome, { action: 'pause' });
+    });
+
+    test('Ctrl-T and Meta-T do not open it', () => {
+        assert.equal(pressKey({ items: items(), active: 0 }, key('t', { ctrl: true })).outcome, undefined);
+        assert.equal(pressKey({ items: items(), active: 0 }, key('t', { meta: true })).outcome, undefined);
+    });
+});
+
+describe('listKeyRows — the key line, wrapped by us', () => {
+    const width = (row) => row.map(([k, action]) => `${k} ${action}`).join(' • ').length;
+
+    test('offers t pause, and e only when the row is editable', () => {
+        assert.ok(listKeys(false).some(([k, action]) => k === 't' && action === 'pause'));
+        assert.equal(listKeys(false).some(([k]) => k === 'e'), false);
+        assert.ok(listKeys(true).some(([k]) => k === 'e'));
+    });
+
+    test('an unknown width is one row', () => {
+        assert.equal(listKeyRows(listKeys(true), undefined).length, 1);
+    });
+
+    test('no row is wider than the terminal, and no key is lost or split', () => {
+        const rows = listKeyRows(listKeys(true), 40);
+        assert.ok(rows.length > 1);
+        for (const row of rows) assert.ok(width(row) <= 40, JSON.stringify(row));
+        assert.deepEqual(rows.flat(), listKeys(true));
+    });
+
+    test('a width narrower than a key still gives every key a row', () => {
+        assert.deepEqual(listKeyRows(listKeys(false), 1).flat(), listKeys(false));
     });
 });

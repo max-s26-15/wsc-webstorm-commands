@@ -31,6 +31,8 @@ Since then: public-release preparation — npm package `webstorm-commands` (MIT,
 22/24/26 (`.github/workflows/ci.yml`), release workflows (`release-cli.yml`, `plugin.yml`, their testable
 logic in `scripts/release.js`), Windows refusal of the POSIX terminal routes (`src/exec/terminalShell.js`),
 and CONTRIBUTING / SECURITY / CHANGELOG / issue templates.
+Since then: a pause after a preset (`waitAfterSeconds`, schema 2, `t` in `wsc -c`), honoured on the IDE,
+OS-terminal and single-tab paths.
 What is left is the launch, mostly user-driven: `/code-review` over the whole diff, a live acceptance
 run with the packed tarball and the CI-signed plugin zip, the dates in `CHANGELOG.md`, the first
 `npm publish` and Marketplace upload by hand (then npm trusted publishing and `PUBLISH_TOKEN`), and the
@@ -272,6 +274,13 @@ exercises it.
   hold both under one name (and a position, not a name — see below); an IDE that reports no configurations is no longer an error by itself (the
   list is shown empty, and `n` still adds), but with *stale* preset entries it still is (exit 1) — rewriting the
   preset from an empty list would delete entries the IDE merely failed to show.
+- **`t` in the `--configure` list is the pause of the whole preset**, so it works on an empty list and carries no
+  row value. Its draft is a local in `runConfigure()` beside `Screen`, which is about rows; the entry and pause changes
+  land in one `writePresets()`, and if neither changed nothing is written, which is also what keeps an unchanged v1 file
+  byte-identical. The key line is wrapped by `listKeyRows()` rather than by the terminal, so `listExtraLines()` knows
+  how many lines it takes before the list is sized; only this list pays for them, other menus keep `pageSizeFor(rows)`.
+  The question's hint is a second line of `message`, since `@inquirer/prompts`' `input` has no hint slot; its `default`
+  shows the current value and is what Enter returns.
 - **Custom entries are added (`n`) and edited (`e`) from the `--configure` list itself.** The stock
   `@inquirer/prompts` checkbox takes no key of ours, so the list is `src/ui/editableCheckbox.js`, drawn on
   `@inquirer/core` (a direct dependency now, with `@inquirer/figures`, both the versions `@inquirer/prompts`
@@ -568,12 +577,46 @@ exercises it.
   the rest would fail identically, each after the full call timeout — and even then it names what already
   started first. `AmbiguousProjectError` deliberately falls into that bucket, which is why the runner matches
   `err.name === 'McpToolError'` rather than `instanceof` (the subclass would otherwise be retried per entry).
+- **A pause after a preset is a barrier beside the plan, not an element of it.** `buildScheduledLaunchPlan()`
+  (`src/resolve.js`) does the one global merge — first position, last mode, per `[kind, name]` — and returns
+  `{ plan, barriers }`, where `PresetBarrier` (`src/exec/schedule.js`) is `{ after, presetName, waitAfterSeconds,
+  members }`: `after` counts unique launches before it, `members` are absolute plan indexes of everything the preset
+  holds, *including entries an earlier preset launched*. So a counter of configurations, inspector ports,
+  `buildExecutionPlan()` and every other per-entry stage know nothing about pauses, and a typo in the last preset
+  still stops the run before the first tab. A barrier exists only if the preset is nonempty and something is left to
+  start behind it; a preset of shared entries keeps its own, and a preset named twice has two. `buildLaunchPlan()` is
+  that merge with no barriers. `insertWaitRows()` takes **one row per entry**, however many lines it holds, and names
+  go through `quotePresetName()`, not bare JSON, which leaves C1 raw (`\u009b` starts an escape sequence).
+- **`src/exec/runSchedule.js` is the one walk over barriers**, shared by all three paths, each bringing only
+  `launchBatch(start, end)`: launch to the next barrier, look at its members, wait. A failed member blocks only at a
+  barrier that holds it; a pauseless preset's failure carries on as before. The signal is re-read after every await,
+  since a wait can finish in the tick Ctrl-C lands in. It is a timer: `launchBatch` reports whether a launch was
+  *accepted*, never whether the thing stayed up. Three things to keep: `runExecutionPlan()` makes one `naming` object
+  for the whole run, so a refused handshake before a pause is not retried after it; a named session opened as Ctrl-C
+  lands is closed without calling its tool; `src/exec/interrupt.js`'s handler is installed only when the run has a
+  barrier (otherwise Ctrl-C keeps its meaning) and removes itself on the first SIGINT, because an abort cannot
+  interrupt a call in flight and a second Ctrl-C must still be able to end the process. Both `--dry-run` halves print
+  the rows and return before any timer. `--restart` does not pause: `launch` in `src/cli.js`'s control branch passes
+  no barriers, and `src/control/run.js` relaunches through the flat `buildLaunchPlan()`, since a pause belongs to a
+  launch of presets in a typed order and a restart has neither.
+- **The single-tab pool separates "launched" from "ended".** `startChild()` returns the promise of `spawn`/`error`,
+  which is what a stage waits for; `runs` holds the promise of `close`, awaited only once the schedule is over — a dev
+  server never ends, so a stage cannot wait for that, and all children ending during a pause must not end the pool
+  while starts are planned. A nonzero exit only reaches the exit code. `close` also answers the launch, for a child
+  gone before anything else was seen. The pool keeps its one SIGINT handler and tells the schedule through its own
+  `AbortController`, so it does not use `interrupt.js`. OS terminal stages are separate `openTerminalTabs()` calls with
+  one `findTerminal()`; each one's settle window is over before the timer starts.
 - `src/presets/store.js` — reads/writes `.idea/webstorm-commands.json`. Every write goes through
   `writeFileAtomic()`: temp file **in the same directory** (`rename` is only atomic within a filesystem) →
   `fsync` → `rename` → `fsync` on the directory. Parsing never falls back to defaults on bad input — it
   throws `PresetConfigError` naming the file, because silently resetting a hand-edited config destroys the
   user's work. Unknown top-level keys and unknown keys inside preset entries are round-tripped untouched,
   and `serializeConfig()` has a fixed key order so rewriting an unchanged config is a no-op diff.
+  **Schema 2**: a preset is `{ entries, waitAfterSeconds?, ...unknown }`, zero is written as no field, and everything
+  outside the store goes through `getPreset()`/`getPresetGroup()`/`setPreset()`/`setPresetWaitAfter()`. `setPreset()`
+  keeps the rest of the object. Migration 1 → 2 wraps *anything* in `{ entries }`, valid or not: left bare, a v1 file
+  holding `{"entries": []}` would pass as v2, and wrapped it reaches the validator, which names it. "The schema version
+  stays 1" in the paragraphs above records what those features decided at the time.
   Schema upgrades go in the `MIGRATIONS` registry (keyed by the version migrated *from*); `migrateConfig()`
   chains them up to `SCHEMA_VERSION`. Order matters: migrations run on loosely-shaped data **before** strict
   entry validation, and a missing `version` key means 0, not "current". Reading a legacy file migrates in
@@ -742,6 +785,10 @@ exercises it.
   `test-utils/fake-server.js` — a real listener on a real ephemeral port, because the only authority on
   "already in use" is the operating system. A port handed back by the OS and immediately closed is the
   known-free control case.
+- `test-utils/controlled-wait.js` — `createControlledWait()`: a wait that ends when a test says so, honouring its
+  signal like `node:timers/promises`. Every pause test uses it, through `deps.wait`/`ctx.wait`, so nothing sleeps;
+  `test/runSchedule.test.js` owns the walk, `describe('preset pauses, end to end')` in `test/cli.integration.test.js`
+  the wiring, with the real runner and only the IDE and clock faked.
 - `test-utils/fake-child.js` — `fakeSpawn()`/`fakeSignals()`: the phase-8 tests never spawn anything real.
   That is not only speed — it lets a Linux machine assert the exact `wt` and `osascript` command lines, and
   keeps a passing suite from leaving a dozen terminal windows open on the desktop.

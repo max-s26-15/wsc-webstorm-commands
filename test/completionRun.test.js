@@ -25,6 +25,21 @@ async function complete(cwd, args, env = {}) {
     return { code, out, err, lines: out.split('\n').filter(Boolean) };
 }
 
+describe('schema 2', () => {
+    test('offers the presets of a v2 file, with nothing on stderr', async () => {
+        const project = await tmpIdeaProject({
+            presets: JSON.stringify({ version: 2, presets: { infra: { entries: [{ name: 'web' }], waitAfterSeconds: 5 } } }),
+        });
+        try {
+            const { err, lines } = await complete(project.dir, ['zsh', 'wsc --preset ']);
+            assert.equal(err, '');
+            assert.ok(lines.includes('infra'));
+        } finally {
+            await project.cleanup();
+        }
+    });
+});
+
 describe('completeCommand — sources', () => {
     test('offers configuration names from .idea/, filtered by the typed prefix', async () => {
         const project = await tmpIdeaProject({ presets: PRESETS });

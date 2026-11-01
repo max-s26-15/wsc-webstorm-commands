@@ -215,19 +215,28 @@ this README use this one:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "defaultPreset": "default",
   "presets": {
-    "default": [
-      { "name": "test", "mode": "run" },
-      { "name": "test:coverage", "mode": "run" }
-    ],
-    "watch": [
-      { "name": "test:watch", "mode": "debug" }
-    ]
+    "default": {
+      "entries": [
+        { "name": "test", "mode": "run" },
+        { "name": "test:coverage", "mode": "run" }
+      ]
+    },
+    "watch": {
+      "entries": [
+        { "name": "test:watch", "mode": "debug" }
+      ]
+    }
   }
 }
 ```
+
+A file in the older layout (`"version": 1`, where a preset is just its list of entries) keeps
+working: it is upgraded in memory on every read, and reaches the disk as version 2 the next time
+`wsc` actually has something to write. An older `wsc` refuses a version 2 file instead of ignoring
+what it does not understand.
 
 ```
 $ wsc --dry-run
@@ -294,6 +303,90 @@ test:watch  debug  (preset)
 → debug_run_configuration  test:watch
 ```
 
+## Pausing between presets
+
+`wsc --preset a b` starts everything at once. When `b` needs `a` to be up first, give `a` a pause:
+press `t` in the `wsc -c` list (`wsc -c --preset a`). The list shows
+`Pause after this preset: 0 s (off)` under the entries, and `t` asks for a whole number of seconds
+from 0 to 86400; `0` turns the pause off and an empty answer keeps the current value. It is saved with
+everything else on the final Enter, and Ctrl-C discards it. In the file it is one more field of the preset:
+
+```json
+"watch": {
+  "entries": [{ "name": "test:watch", "mode": "run" }],
+  "waitAfterSeconds": 10
+}
+```
+
+The order is the one you type, and the pause shows up in the plan:
+
+```
+$ wsc --preset watch default --dry-run
+would launch 3 configuration(s) via run-window:
+test:watch     run    (preset)
+→ wait 10s after preset "watch"
+test           run    (preset)
+test:coverage  run    (preset)
+→ execute_run_configuration  test:watch
+→ wait 10s after preset "watch"
+→ execute_run_configuration  test
+→ execute_run_configuration  test:coverage
+```
+
+Without `--dry-run`, with two presets of custom commands (`seed`, with a pause of 2 seconds, and `after`):
+
+```
+$ wsc --preset seed after
+launching 2 configuration(s) via run-window + terminal:
+seed    terminal  (preset)
+→ wait 2s after preset "seed"
+report  terminal  (preset)
+warn: custom commands from the preset:
+  seed: echo seeding
+  report: echo done
+started seed (terminal)
+waiting 2s after preset "seed"
+started report (terminal)
+started 2 configuration(s)
+```
+
+- **It is a timer, not a readiness check.** The pause counts from the moment the IDE answered the
+  last launch of the preset. `wsc` does not look at ports or logs, and a server that crashes during
+  the pause goes unnoticed. Nor does it attach a debugger: a `:debug` process waiting on its first
+  line is still waiting when the pause ends.
+- **Only when something is left to start.** `wsc --preset a` alone does not wait, and neither does
+  the last preset of a command line. Names on the command line come after the presets, so
+  `wsc --preset a web` does wait before `web`, and so does a bare `wsc web` for the default preset.
+- **Entries shared between presets start once**, at their first position, with the last mode given.
+  A preset made only of such entries still keeps its pause, at its own place in the order; a preset
+  with no entries has none. Naming a preset twice pauses twice.
+- **A refused launch stops what is waiting.** If an entry of a preset with a pause fails to start,
+  that preset's other entries still get their try, then the pause and everything behind it are skipped: the
+  summary names what failed and what was skipped, and `wsc` exits 1. What already opened stays open.
+  A preset without a pause carries on after a failure, as a launch always has. An entry shared with an
+  earlier preset counts as a member of each.
+- **Ctrl-C during the pause** stops there and exits 130. IDE tabs stay open and keep running:
+
+```
+$ wsc --preset seed after
+...
+started seed (terminal)
+waiting 2s after preset "seed"
+^C
+warn: stopped: 1 of 2 started, and those tabs keep running; not started: report
+```
+
+The pauses apply on the no-IDE path too (see [`--fallback`](#--fallback--when-webstorm-is-not-answering)).
+OS terminal tabs open stage by stage, so an emulator may put a later stage in a new window; the
+guarantee is the order and a tab per entry, not one window. There, "started" means the emulator
+opened the tab, not that the command inside it worked. When everything runs in this one terminal,
+`wsc` starts each stage once the previous stage's processes have started, without waiting for them to
+end. An entry of a preset with a pause that could not start stops what is behind that pause, and a
+process that exits later only affects the final exit code. Ctrl-C there stops the processes as it always has.
+
+`--restart` does not pause. A pause belongs to a launch: the entries it restarts in place, and any it
+has to launch anew, go one after another.
+
 ## Stopping and restarting (`--stop`, `--restart`)
 
 `wsc --stop` stops what runs from your presets; `wsc --restart` restarts it, in the same tabs. So there
@@ -338,14 +431,18 @@ block `test:coverage` had finished, so it is not running and not restarted:
 
 ```json
 {
-  "dev": [
-    { "name": "test:watch" },
-    { "name": "test:coverage", "mode": "debug" },
-    { "name": "types", "mode": "terminal", "commands": ["npx tsc --noEmit --watch -p jsconfig.json"] }
-  ],
-  "tools": [
-    { "name": "clock", "mode": "terminal", "commands": ["while true; do date; sleep 5; done"] }
-  ]
+  "dev": {
+    "entries": [
+      { "name": "test:watch" },
+      { "name": "test:coverage", "mode": "debug" },
+      { "name": "types", "mode": "terminal", "commands": ["npx tsc --noEmit --watch -p jsconfig.json"] }
+    ]
+  },
+  "tools": {
+    "entries": [
+      { "name": "clock", "mode": "terminal", "commands": ["while true; do date; sleep 5; done"] }
+    ]
+  }
 }
 ```
 
@@ -507,10 +604,12 @@ while the other entries of the same launch keep their own tab kind. It is what
 also be kept in a preset:
 
 ```json
-"default": [
-  { "name": "test", "mode": "run" },
-  { "name": "test:watch", "mode": "terminal" }
-]
+"default": {
+  "entries": [
+    { "name": "test", "mode": "run" },
+    { "name": "test:watch", "mode": "terminal" }
+  ]
+}
 ```
 
 `wsc test:watch:terminal` asks for the same on the command line, and `wsc -c` offers it as the third
@@ -549,10 +648,12 @@ A preset entry with a `commands` list needs no run configuration at all: `wsc` r
 new IDE **Terminal tab titled with the entry's name**, the same tab kind `:terminal` opens.
 
 ```json
-"default": [
-  { "name": "test", "mode": "run" },
-  { "name": "seed db", "mode": "terminal", "commands": ["npm i", "npm run seed"] }
-]
+"default": {
+  "entries": [
+    { "name": "test", "mode": "run" },
+    { "name": "seed db", "mode": "terminal", "commands": ["npm i", "npm run seed"] }
+  ]
+}
 ```
 
 `mode` is always `terminal` for such an entry, and may be left out. The commands are joined with `&&`,
@@ -724,7 +825,7 @@ name really does end in `:debug` (likewise `name:terminal:terminal` for `:termin
 | 0 | everything asked for was started, stopped or restarted (or printed), or there was nothing to stop |
 | 1 | a runtime error: unknown name, unreachable IDE, a launch the IDE refused, a stop or restart that failed |
 | 2 | a usage error: a bad flag, or flags that contradict each other |
-| 130 | Ctrl-C at an interactive prompt; nothing was written or launched |
+| 130 | Ctrl-C at an interactive prompt (nothing was written or launched), or during a pause between presets (what already started stays) |
 
 A partial launch exits 1 and names what did and did not start — launching is deliberately
 not atomic, because by then the user has already been told what is coming. `--stop` and `--restart`

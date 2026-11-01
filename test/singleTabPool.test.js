@@ -6,6 +6,7 @@ import { SHELL } from '../src/fallback/terminalTabs.js';
 import { lineBuffer, missingShellMessage, runSingleTabPool } from '../src/fallback/singleTabPool.js';
 import { fakeSignals, fakeSpawn } from '../test-utils/fake-child.js';
 import { fakeStream } from '../test-utils/capture.js';
+import { createControlledWait } from '../test-utils/controlled-wait.js';
 
 /** A logger writing into strings, with colour on, so the tagging can be asserted. */
 const testLogger = (env = { FORCE_COLOR: '1' }) => {
@@ -249,5 +250,185 @@ describe('runSingleTabPool', () => {
         await run;
 
         assert.deepEqual(signals.handlers, []);
+    });
+});
+
+describe('runSingleTabPool — stages', { timeout: 5000 }, () => {
+    const THREE = [...TABS, { name: 'mail', command: 'npm run mail' }];
+    const BARRIER = [{ after: 1, presetName: 'infra', waitAfterSeconds: 10, members: [0] }];
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+    const setup = (tabs = TABS, barriers = BARRIER) => {
+        const fake = fakeSpawn({ pipes: true, manual: true });
+        const signals = fakeSignals();
+        const clock = createControlledWait();
+        const logged = testLogger({ NO_COLOR: '1' });
+        const running = runSingleTabPool(tabs, {
+            cwd: '/p',
+            log: logged.log,
+            spawn: fake.spawn,
+            process: signals,
+            platform: 'linux',
+            barriers,
+            wait: clock.wait,
+        });
+        return { ...fake, signals, clock, running, ...logged };
+    };
+
+    test('the next stage starts after the pause, with the first child still alive', async () => {
+        const h = setup();
+        assert.equal(h.children.length, 1);
+        h.children[0].emit('spawn');
+        const pending = await h.clock.next();
+        assert.equal(pending.ms, 10000);
+        assert.equal(h.children.length, 1, 'nothing behind the pause has started');
+
+        pending.release();
+        await tick();
+        assert.equal(h.children.length, 2);
+        h.children[1].emit('spawn');
+        await tick();
+
+        h.children[0].finish(0);
+        h.children[1].finish(0);
+        assert.equal(await h.running, 0);
+        assert.equal(h.signals.handlers.length, 0);
+    });
+
+    test('the timer waits for the launch to be acknowledged', async () => {
+        const h = setup();
+        await tick();
+        assert.deepEqual(h.clock.calls, []);
+        h.children[0].emit('spawn');
+        (await h.clock.next()).release();
+        await tick();
+        h.children[1].emit('spawn');
+        await tick();
+        for (const child of h.children) child.finish(0);
+        await h.running;
+    });
+
+    test('a spawn error in a member skips what is behind it, and the run fails once its children end', async () => {
+        const h = setup(THREE, [{ after: 2, presetName: 'infra', waitAfterSeconds: 10, members: [0, 1] }]);
+        h.children[0].emit('error', new Error('nope'));
+        h.children[0].emit('close', -2, null);
+        h.children[1].emit('spawn');
+        await tick();
+
+        assert.equal(h.children.length, 2);
+        assert.deepEqual(h.clock.calls, []);
+        assert.match(h.err(), /"infra"/);
+        assert.match(h.err(), /mail/);
+
+        let settled = false;
+        h.running.then(() => { settled = true; });
+        await tick();
+        assert.equal(settled, false, 'the child that did start is still ours to wait for');
+
+        h.children[1].finish(0);
+        assert.equal(await h.running, 1);
+        assert.equal(h.children.length, 2);
+    });
+
+    test('a failure is counted once, so one spawn error is one failure in the exit code', async () => {
+        const h = setup(TABS, []);
+        h.children[0].emit('error', new Error('nope'));
+        h.children[0].emit('close', -2, null);
+        h.children[1].emit('spawn');
+        h.children[1].finish(0);
+        assert.equal(await h.running, 1);
+    });
+
+    test('a nonzero exit after the launch does not hold up the next stage, and still fails the run', async () => {
+        const h = setup();
+        h.children[0].emit('spawn');
+        const pending = await h.clock.next();
+        h.children[0].finish(3);
+        await tick();
+
+        pending.release();
+        await tick();
+        assert.equal(h.children.length, 2, 'the timer is not a health check');
+        h.children[1].emit('spawn');
+        h.children[1].finish(0);
+        assert.equal(await h.running, 1);
+    });
+
+    test('a child that dies before it was acknowledged still lets the stage end', async () => {
+        const h = setup();
+        h.children[0].finish(0);
+        (await h.clock.next()).release();
+        await tick();
+        h.children[1].emit('spawn');
+        h.children[1].finish(0);
+        assert.equal(await h.running, 0);
+    });
+
+    test('all children ending during the pause does not end the run', async () => {
+        const h = setup();
+        h.children[0].emit('spawn');
+        const pending = await h.clock.next();
+
+        let settled = false;
+        h.running.then(() => { settled = true; });
+        h.children[0].finish(0);
+        await tick();
+        assert.equal(settled, false, 'there is still something planned');
+
+        pending.release();
+        await tick();
+        assert.equal(h.children.length, 2);
+        h.children[1].emit('spawn');
+        h.children[1].finish(0);
+        assert.equal(await h.running, 0);
+    });
+
+    test('Ctrl-C during the pause stops the groups, and a late release spawns nothing', async () => {
+        const h = setup();
+        h.children[0].pid = 4242;
+        h.children[0].emit('spawn');
+        const pending = await h.clock.next();
+
+        h.signals.emit();
+        assert.deepEqual(h.signals.signalled, [[-4242, 'SIGINT']]);
+        pending.release();
+        await tick();
+        assert.equal(h.children.length, 1);
+
+        h.children[0].finish(null, 'SIGINT');
+        assert.equal(await h.running, 130);
+        assert.equal(h.signals.handlers.length, 0);
+    });
+
+    test('a second Ctrl-C during the pause still escalates', async () => {
+        const h = setup();
+        h.children[0].pid = 4242;
+        h.children[0].emit('spawn');
+        await h.clock.next();
+
+        h.signals.emit();
+        h.signals.emit();
+        assert.deepEqual(h.signals.signalled, [[-4242, 'SIGINT'], [-4242, 'SIGKILL']]);
+        h.children[0].finish(null, 'SIGKILL');
+        assert.equal(await h.running, 130);
+    });
+
+    test('Ctrl-C while a stage is being acknowledged starts no wait', async () => {
+        const h = setup();
+        h.signals.emit();
+        h.children[0].emit('spawn');
+        await tick();
+        assert.deepEqual(h.clock.calls, []);
+        h.children[0].finish(null, 'SIGINT');
+        assert.equal(await h.running, 130);
+    });
+
+    test('without barriers every child starts at once, as it always has', async () => {
+        const h = setup(THREE, []);
+        assert.equal(h.children.length, 3);
+        for (const child of h.children) child.emit('spawn');
+        for (const child of h.children) child.finish(0);
+        assert.equal(await h.running, 0);
+        assert.deepEqual(h.clock.calls, []);
     });
 });

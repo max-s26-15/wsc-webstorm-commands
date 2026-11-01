@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
 
+import { listExtraLines, pageSizeFor } from '../src/ui/configureLogic.js';
 import { editableCheckbox } from '../src/ui/editableCheckbox.js';
 
 // What @inquirer/core's ScreenManager writes when a prompt settles: the last render is
@@ -88,5 +89,56 @@ describe('editableCheckbox — the real prompt, through fake streams', () => {
 
         assert.deepEqual(result, { action: 'new', checked: [], active: 0 });
         assert.match(out, /press n to add a custom command/);
+    });
+
+    test('t leaves the list with its state, and erases it', async () => {
+        const { result, out } = await press(['\u001b[B', 't']);
+
+        assert.deepEqual(result, { action: 'pause', checked: ['web'], active: 1 });
+        assert.ok(out.endsWith(`${ERASE_LINE}\u001b[G${SETTLED}`), 'erased');
+    });
+
+    test('the list shows the pause, and offers t for it', async () => {
+        const off = await press(['\r']);
+        assert.match(off.out, /Pause after this preset: 0 s \(off\)/);
+        assert.match(off.out, /t\S* \S*pause/);
+
+        const on = await press(['\r'], { waitAfterSeconds: 10 });
+        assert.match(on.out, /Pause after this preset: 10 s/);
+    });
+
+    test('the summary line Enter leaves behind stays one line', async () => {
+        const { out } = await press(['\r'], { waitAfterSeconds: 10 });
+        const last = out.slice(out.lastIndexOf('Pick'));
+        assert.doesNotMatch(last, /Pause after/);
+        assert.match(last, /^Pick.*web/);
+    });
+
+    test('t opens the pause from an empty list too', async () => {
+        const { result, out } = await press(['t'], { choices: [] });
+
+        assert.deepEqual(result, { action: 'pause', checked: [], active: 0 });
+        assert.match(out, /Pause after this preset/);
+    });
+
+    test('12 rows, 60 columns: nothing wider than the terminal, and everything fits', async () => {
+        // eslint-disable-next-line no-control-regex
+        const strip = (text) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+        const items = Array.from({ length: 30 }, (_, i) => ({ value: `v${i}`, name: `item ${i}`, checked: false, editable: false }));
+        items[0] = { value: 'c:0', name: '⌘ seed', checked: true, editable: true };
+        const { result, out } = await press(['t'], {
+            choices: items,
+            columns: 60,
+            pageSize: pageSizeFor(12, listExtraLines(60)),
+            waitAfterSeconds: 86400,
+            active: 0,
+        });
+
+        assert.deepEqual(result, { action: 'pause', checked: ['c:0'], active: 0 });
+        const render = strip(out.slice(0, out.lastIndexOf(ERASE_LINE)));
+        const first = render.slice(render.indexOf('Pick'));
+        const lines = first.slice(0, first.indexOf('submit') + 'submit'.length).split('\n');
+        assert.ok(lines.length <= 12, `${lines.length} lines:\n${lines.join('\n')}`);
+        for (const line of lines) assert.ok(line.length <= 60, line);
     });
 });

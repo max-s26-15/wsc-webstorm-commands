@@ -6,6 +6,7 @@
  * Nothing is launched until the whole plan resolves, so a typo in the third argument
  * never leaves two processes already running.
  */
+import { insertWaitRows } from './exec/schedule.js';
 
 /**
  * @typedef {{ name: string, description?: string, supportsDynamicLaunchOverrides?: boolean }} RunConfigInfo
@@ -227,40 +228,51 @@ function planKey(kind, name) {
 }
 
 /**
- * Build the full list of things to launch.
+ * Build the full list of things to launch, and the pauses that break it up.
  *
  * Preset entries come first, in the order they were configured; command-line requests
  * override the mode of anything already in the preset and are appended otherwise.
  * Both sides are resolved against the IDE's list *before* merging, so `wsc web`
  * overrides a preset entry written as `Web` — they are the same configuration.
  *
+ * There is one merge for the whole run, not one per preset: an entry two presets share has
+ * one position and one launch, and every preset that contains it counts it as a member.
+ * A pause is kept only while something is left to launch behind it; a preset that is empty
+ * has no boundary to speak of, while one made up of shared entries still has its own.
+ *
  * @param {object} args
  * @param {RunConfigInfo[]} args.configs - from get_run_configurations
- * @param {Array<RunRequest & { commands?: string[] }>} [args.preset] - entries of the active
- *   preset; one that carries `commands` is a custom entry and never touches `configs`
+ * @param {import('./presets/store.js').PresetGroup[]} [args.presets] - in the order typed; an
+ *   entry that carries `commands` is a custom entry and never touches `configs`
  * @param {RunRequest[]} [args.requests] - from the command line
- * @returns {PlanEntry[]}
+ * @returns {{ plan: PlanEntry[], barriers: import('./exec/schedule.js').PresetBarrier[] }}
  * @throws {UnknownConfigurationError|AmbiguousNameError} before anything is launched
  */
-export function buildLaunchPlan({ configs, preset = [], requests = [] }) {
+export function buildScheduledLaunchPlan({ configs, presets = [], requests = [] }) {
     /** @type {Map<string, PlanEntry>} */
     const plan = new Map();
+    /** @type {Array<{ group: import('./presets/store.js').PresetGroup, keys: string[], after: number }>} */
+    const boundaries = [];
 
-    for (const entry of preset) {
-        if (entry.commands !== undefined) {
-            // Nothing to resolve: the commands are the definition. Two of one name (from two
-            // presets launched together) follow the rule below — first position, last wins.
-            plan.set(planKey('custom', entry.name), {
-                name: entry.name,
-                mode: 'terminal',
-                commands: entry.commands,
-                source: 'preset',
-            });
-            continue;
+    for (const group of presets) {
+        /** @type {string[]} */
+        const keys = [];
+        for (const entry of group.entries) {
+            if (entry.commands !== undefined) {
+                // Nothing to resolve: the commands are the definition. Two of one name (from two
+                // presets launched together) follow the rule below — first position, last wins.
+                const key = planKey('custom', entry.name);
+                plan.set(key, { name: entry.name, mode: 'terminal', commands: entry.commands, source: 'preset' });
+                keys.push(key);
+                continue;
+            }
+
+            const config = resolveName(entry.name, configs, { source: 'preset' });
+            const key = planKey('config', config.name);
+            plan.set(key, { name: config.name, mode: entry.mode, config, source: 'preset' });
+            keys.push(key);
         }
-
-        const config = resolveName(entry.name, configs, { source: 'preset' });
-        plan.set(planKey('config', config.name), { name: config.name, mode: entry.mode, config, source: 'preset' });
+        boundaries.push({ group, keys, after: plan.size });
     }
 
     for (const request of requests) {
@@ -269,21 +281,46 @@ export function buildLaunchPlan({ configs, preset = [], requests = [] }) {
         plan.set(planKey('config', config.name), { name: config.name, mode: request.mode, config, source: 'cli' });
     }
 
-    return [...plan.values()];
+    const order = new Map([...plan.keys()].map((key, index) => [key, index]));
+    const barriers = boundaries
+        .filter(({ group, keys, after }) => group.waitAfterSeconds > 0 && keys.length > 0 && after < plan.size)
+        .map(({ group, keys, after }) => ({
+            after,
+            presetName: group.name,
+            waitAfterSeconds: group.waitAfterSeconds,
+            members: [...new Set(keys.map((key) => /** @type {number} */ (order.get(key))))].sort((a, b) => a - b),
+        }));
+
+    return { plan: [...plan.values()], barriers };
+}
+
+/**
+ * The same merge for a caller with one list of entries and no pauses.
+ *
+ * @param {object} args
+ * @param {RunConfigInfo[]} args.configs - from get_run_configurations
+ * @param {Array<RunRequest & { commands?: string[] }>} [args.preset] - entries of the active preset
+ * @param {RunRequest[]} [args.requests] - from the command line
+ * @returns {PlanEntry[]}
+ * @throws {UnknownConfigurationError|AmbiguousNameError} before anything is launched
+ */
+export function buildLaunchPlan({ configs, preset = [], requests = [] }) {
+    const group = { name: '', entries: preset, waitAfterSeconds: 0 };
+    return buildScheduledLaunchPlan({ configs, presets: [group], requests }).plan;
 }
 
 /**
  * @param {PlanEntry[]} plan
+ * @param {import('./exec/schedule.js').PresetBarrier[]} [barriers] - shown where they fall
  * @returns {string} one line per entry, for --dry-run and diagnostics
  */
-export function formatPlan(plan) {
+export function formatPlan(plan, barriers = []) {
     if (plan.length === 0) return 'nothing to launch';
 
     const width = Math.max(...plan.map((entry) => entry.name.length));
     // 5 is `debug`, the longest mode before `terminal` existed: a plan without one keeps its
     // exact old alignment, and one with it widens the column rather than run into the source.
     const modeWidth = Math.max(5, ...plan.map((entry) => entry.mode.length));
-    return plan
-        .map((entry) => `${entry.name.padEnd(width)}  ${entry.mode.padEnd(modeWidth)}  (${entry.source})`)
-        .join('\n');
+    const rows = plan.map((entry) => `${entry.name.padEnd(width)}  ${entry.mode.padEnd(modeWidth)}  (${entry.source})`);
+    return insertWaitRows(rows, barriers).join('\n');
 }
