@@ -1,6 +1,6 @@
 # wsc Companion
 
-A tiny WebStorm plugin that adds two tools to the IDE's built-in MCP Server.
+A tiny WebStorm plugin that adds tools to the IDE's built-in MCP Server.
 
 Until 0.5.0 it was called "wsc Debug Tool" (`dev.wsc.debug-tool`); 0.5.1 changed the plugin ID to
 `dev.wsc.ide`, so the IDE sees a different plugin — uninstall "wsc Debug Tool" once.
@@ -40,6 +40,23 @@ without the Debug tool, and custom commands from a preset) whenever the IDE list
 `TerminalToolWindowManager.createShellWidget`, which is deprecated in 262: its replacement is experimental and lives in
 an optional content module of the terminal plugin that a plugin depending on the terminal plugin is not guaranteed
 to see, so expect to touch this after a WebStorm update.
+
+`list_running()`, `stop_run_configuration(configurationName, mode?)`, `restart_run_configuration(configurationName, mode?)`,
+`stop_terminal_tab(kind, entryName)` and `restart_terminal_tab(kind, entryName, command)` (since 0.6.0) are what
+`wsc --stop` and `wsc --restart` stand on: the IDE's own MCP Server can neither say what is running nor stop it, and
+`wsc` keeps no record of what it launched — the IDE is the record. `list_running` answers JSON with `runs` (run
+configurations with a live process, `mode` `run` or `debug`) and `terminals`. A Terminal tab is listed only if
+`open_terminal_tab` marked it: since 0.6.0 that tool takes an optional `kind` (`config` | `custom`), `mode` and
+`debugPort`, and keeps them on the tab's widget in memory — not on its title, which the shell is free to change, and
+never on disk. A tab opened by an older wsc, by hand, or before the IDE restarted carries no mark and is left alone.
+Which configuration a Run or Debug process belongs to, and with which executor it started, is recorded by an
+`ExecutionListener` as the IDE starts it (`RunRegistry`): a Run tab carries both only through internal API, which the
+plugin verifier refuses. A process started before the plugin was loaded — before a dynamic install or update — is
+therefore not listed until it is started again.
+The run tools are the Stop and Rerun buttons: a restart stays in the same tab (`restartRunProfile` with the old tab as
+the content to reuse) and is confirmed by the IDE within 10 s; a restarted debug session is muted like a new one.
+The terminal tools press Ctrl-C in the marked tab and wait up to 5 s for `TerminalWidget.isCommandRunning()` to turn
+false; a restart then types the new command into the same tab, and types nothing if the old one never stopped.
 
 ## Build
 

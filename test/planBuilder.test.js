@@ -578,7 +578,12 @@ describe('buildExecutionPlan — a real Terminal tab through the wsc IDE plugin'
         const [call] = buildExecutionPlan({ plan: buildLaunchPlan({ configs: CONFIGS, preset: [seed] }), terminalTool: true });
 
         assert.equal(call.tool, TERMINAL_TAB_TOOL);
-        assert.deepEqual(call.arguments, { tabName: 'seed db', command: 'npm i && npm run seed' });
+        assert.deepEqual(call.arguments, {
+            tabName: 'seed db',
+            command: 'npm i && npm run seed',
+            kind: 'custom',
+            mode: 'terminal',
+        });
         // The title travels as an argument, so no session has to be opened under the name, and
         // the call answers at once, so there is no client-side bound to apply either.
         assert.equal(call.tabName, undefined);
@@ -599,6 +604,30 @@ describe('buildExecutionPlan — a real Terminal tab through the wsc IDE plugin'
 
         const [target] = buildExecutionPlan({ plan: plan('web'), target: 'terminal', terminalTool: true });
         assert.equal(target.tool, TERMINAL_TAB_TOOL);
+    });
+
+    test('marks every tab with what wsc launched in it, which is how --stop finds it again', () => {
+        const [terminal] = buildExecutionPlan({ plan: plan('web:terminal'), terminalTool: true });
+        assert.deepEqual(
+            [terminal.arguments.kind, terminal.arguments.mode, Object.hasOwn(terminal.arguments, 'debugPort')],
+            ['config', 'terminal', false],
+        );
+
+        // The mark carries the entry's mode, not the target: --target=terminal is not part of the entry.
+        const [targeted] = buildExecutionPlan({ plan: plan('web'), target: 'terminal', terminalTool: true });
+        assert.deepEqual([targeted.arguments.kind, targeted.arguments.mode], ['config', 'run']);
+
+        const [debugged] = buildExecutionPlan({ plan: plan('api:debug'), target: 'terminal', terminalTool: true, debugTool: true });
+        assert.deepEqual(
+            [debugged.arguments.kind, debugged.arguments.mode, debugged.arguments.debugPort],
+            ['config', 'debug', DEBUG_PORT_BASE],
+        );
+    });
+
+    test('the IDE\'s own terminal tool gets no mark: it has no parameter for one', () => {
+        const [call] = buildExecutionPlan({ plan: plan('web:terminal') });
+        assert.equal(Object.hasOwn(call.arguments, 'kind'), false);
+        assert.equal(Object.hasOwn(call.arguments, 'mode'), false);
     });
 
     test('a Run-window entry and a Debug-tool entry are untouched by it', () => {

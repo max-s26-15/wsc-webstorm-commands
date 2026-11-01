@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { readIdeaRunConfigs } from '../fallback/ideaRunConfigs.js';
-import { CONFIG_DIR, findProjectRoot, listPresets, readPresets } from '../presets/store.js';
+import { CONFIG_DIR, findProjectRoot, getPreset, listPresets, readPresets } from '../presets/store.js';
 import { complete, findProjectFlag } from './candidates.js';
 import { formatCompletion } from './format.js';
 import { isCompletionShell } from './shells.js';
@@ -58,15 +58,20 @@ async function projectRootFor(words, cwd) {
  * @returns {Promise<import('./candidates.js').Catalogue>}
  */
 async function readCatalogue(root, report) {
-    if (root === null) return { presets: [], configs: [] };
+    if (root === null) return { presets: [], configs: [], entries: [] };
 
+    // One read gives both: the preset names, and every entry name in them (what --stop and
+    // --restart act on — custom commands included).
+    const config = await readPresets(root).catch((err) => {
+        report('presets', err);
+        return null;
+    });
     /** @type {string[]} */
-    const presets = await readPresets(root)
-        .then(listPresets)
-        .catch((err) => {
-            report('presets', err);
-            return [];
-        });
+    const presets = config === null ? [] : listPresets(config);
+    /** @type {string[]} */
+    const entries = config === null
+        ? []
+        : [...new Set(presets.flatMap((name) => getPreset(config, name).map((entry) => entry.name)))];
     /** @type {string[]} */
     const configs = await readIdeaRunConfigs(root)
         .then((all) => all.map(({ name }) => name))
@@ -75,7 +80,7 @@ async function readCatalogue(root, report) {
             return [];
         });
 
-    return { presets, configs };
+    return { presets, configs, entries };
 }
 
 /**

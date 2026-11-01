@@ -17,7 +17,8 @@ import { COMPLETION_SHELLS } from './shells.js';
  *
  * @typedef {'values' | 'dirs' | 'none'} Directive
  * @typedef {{ directive: Directive, values: string[] }} Completion
- * @typedef {{ presets: string[], configs: string[] }} Catalogue
+ * @typedef {{ presets: string[], configs: string[], entries: string[] }} Catalogue - `entries`: the names
+ *   of every entry of every preset, custom commands included
  */
 
 /** Flags whose value is one of a short fixed list. A Map: the key is text the user typed. */
@@ -184,6 +185,14 @@ export function complete({ words, partial }, catalogue) {
     // wsc refuses names next to these, so suggesting one would offer a command line that
     // is rejected the moment it is run.
     if (flagWords.some(isIntent)) return none();
+
+    // --stop and --restart act on preset entries, not on the IDE's catalogue: a configuration in
+    // no preset has nothing to stop, and a custom command is nameable here though not for a
+    // launch. No `name:mode` either — they take the mode from the preset and refuse a suffix.
+    if (flagWords.some((word) => word === '--stop' || word === '--restart')) {
+        const runOfPresets = !literal && inPresetRun(flagWords, catalogue.presets) ? catalogue.presets : [];
+        return offer([...new Set([...runOfPresets, ...catalogue.entries])].filter((name) => name.startsWith(partial)));
+    }
 
     // `--` ends a run of presets too: parseCliArgs stops attributing tokens to `--preset`
     // there, so what follows is a configuration name even right after `--preset x --`.

@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "dev.wsc"
-version = "0.5.1"
+version = "0.6.0"
 
 // The WebStorm this plugin is built and verified against. CI downloads it; locally,
 // -PwebstormPath=/snap/webstorm/current builds against an installed IDE instead (faster, offline).
