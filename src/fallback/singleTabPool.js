@@ -12,6 +12,8 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 
+import { runSchedule } from '../exec/runSchedule.js';
+import { quotePresetName } from '../exec/schedule.js';
 import { CANCELLED_EXIT_CODE } from '../ui/promptCancel.js';
 import { SHELL } from './terminalTabs.js';
 
@@ -26,6 +28,7 @@ export const KILL_GRACE_MS = 2000;
 
 /**
  * @typedef {import('./terminalTabs.js').TabSpec} TabSpec
+ * @typedef {import('../exec/runSchedule.js').IndexFailure} IndexFailure
  * @typedef {{ tagged: (name: string, line: string) => void, info: Function, warn: Function, error: Function, debug: Function }} PoolLogger
  */
 
@@ -84,6 +87,8 @@ export function missingShellMessage() {
  *   listened for, and how a process group is signalled
  * @param {string} [opts.platform]
  * @param {number} [opts.killGraceMs]
+ * @param {import('../exec/schedule.js').PresetBarrier[]} [opts.barriers] - where to pause
+ * @param {import('../exec/runSchedule.js').Wait} [opts.wait] - injected in tests
  * @returns {Promise<number>} 0 when every child exited 0, 130 on Ctrl-C, 1 otherwise
  */
 export async function runSingleTabPool(tabs, opts) {
@@ -94,6 +99,11 @@ export async function runSingleTabPool(tabs, opts) {
 
     /** @type {import('node:child_process').ChildProcess[]} */
     const children = [];
+    /** @type {Promise<unknown>[]} */
+    const runs = [];
+    // This pool owns its children, so it keeps its one SIGINT handler (stopping them is its
+    // job) and only tells the schedule about it through this.
+    const controller = new AbortController();
     let interrupted = false;
     let failures = 0;
     let missingShellReported = false;
@@ -110,6 +120,7 @@ export async function runSingleTabPool(tabs, opts) {
             return;
         }
         interrupted = true;
+        controller.abort();
         log.warn(`stopping ${children.length} process(es) — press Ctrl-C again to kill them`);
 
         stopAll('SIGINT');
@@ -118,22 +129,39 @@ export async function runSingleTabPool(tabs, opts) {
 
     proc.on('SIGINT', onInterrupt);
 
-    try {
-        const runs = tabs.map((tab) => new Promise((resolve) => {
-            const child = spawn(SHELL, ['-c', tab.command], {
-                cwd,
-                env: opts.env ?? process.env,
-                // stdin is closed rather than inherited: several children sharing one
-                // terminal's input would each read a fraction of whatever is typed.
-                stdio: ['ignore', 'pipe', 'pipe'],
-                // Each child leads its own process group, so Ctrl-C can take down the whole
-                // tree behind it (see stopTree). It also means the terminal no longer
-                // delivers Ctrl-C to them itself — the handler below is now the only route,
-                // which is the point: signal delivery is identical with or without a tty.
-                detached: true,
-            });
-            children.push(child);
+    /**
+     * Each child has two promises with two meanings: its launch was answered (this returns it,
+     * and only this the schedule waits for) and it has ended (`runs`, the end of the pool). A
+     * dev server never ends, so a stage cannot wait for that, and an exit after the launch is
+     * the run's exit code, never a reason to hold up the next stage.
+     *
+     * @param {TabSpec} tab
+     * @param {number} index
+     * @returns {Promise<IndexFailure | null>} the failure to start, if there was one
+     */
+    const startChild = (tab, index) => {
+        const child = spawn(SHELL, ['-c', tab.command], {
+            cwd,
+            env: opts.env ?? process.env,
+            // stdin is closed rather than inherited: several children sharing one
+            // terminal's input would each read a fraction of whatever is typed.
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // Each child leads its own process group, so Ctrl-C can take down the whole
+            // tree behind it (see stopTree). It also means the terminal no longer
+            // delivers Ctrl-C to them itself — the handler below is now the only route,
+            // which is the point: signal delivery is identical with or without a tty.
+            detached: true,
+        });
+        children.push(child);
 
+        /** @type {(failure: IndexFailure | null) => void} */
+        let answer = () => {};
+        /** @type {Promise<IndexFailure | null>} */
+        const answered = new Promise((resolve) => {
+            answer = resolve;
+        });
+
+        runs.push(new Promise((resolve) => {
             const buffers = [child.stdout, child.stderr].map((stream) => {
                 const buffer = lineBuffer((line) => log.tagged(tab.name, line));
                 stream?.setEncoding('utf8');
@@ -145,6 +173,8 @@ export async function runSingleTabPool(tabs, opts) {
             // negative code, which must not add a status line (or a failure) of its own.
             let failedToStart = false;
 
+            child.on('spawn', () => answer(null));
+
             child.on('error', (err) => {
                 failedToStart = true;
                 if (/** @type {NodeJS.ErrnoException} */ (err).code === 'ENOENT') {
@@ -155,6 +185,7 @@ export async function runSingleTabPool(tabs, opts) {
                     log.error(`${tab.name}: ${err.message}`);
                 }
                 failures++;
+                answer({ index, reason: err.message });
                 resolve(undefined);
             });
 
@@ -162,6 +193,8 @@ export async function runSingleTabPool(tabs, opts) {
             // lines of a crashing process are printed before its status line.
             child.on('close', (code, signal) => {
                 for (const buffer of buffers) buffer.flush();
+                // Harmless when 'spawn' came first, which it does unless this child is gone.
+                answer(null);
 
                 if (failedToStart) return;
                 if (signal !== null) log.tagged(tab.name, `stopped by ${signal}`);
@@ -174,7 +207,50 @@ export async function runSingleTabPool(tabs, opts) {
             });
         }));
 
+        return answered;
+    };
+
+    /**
+     * @param {number} start
+     * @param {number} end - exclusive
+     * @returns {Promise<import('../exec/runSchedule.js').BatchReport>}
+     */
+    const launchBatch = async (start, end) => {
+        /** @type {Array<{ index: number, answered: Promise<IndexFailure | null> }>} */
+        const launches = [];
+        for (let index = start; index < end; index++) {
+            if (controller.signal.aborted) break;
+            launches.push({ index, answered: startChild(tabs[index], index) });
+        }
+
+        /** @type {import('../exec/runSchedule.js').BatchReport} */
+        const report = { started: [], failed: [] };
+        for (const { index, answered } of launches) {
+            const failure = await answered;
+            if (failure) report.failed.push(failure);
+            else report.started.push(index);
+        }
+        return report;
+    };
+
+    try {
         log.info(`running ${tabs.length} configuration(s) in this terminal — Ctrl-C stops all of them`);
+
+        const report = await runSchedule(tabs.length, opts.barriers ?? [], {
+            launchBatch,
+            wait: opts.wait,
+            signal: controller.signal,
+            log: { info: (line) => log.info(line) },
+        });
+        if (report.blockedBy !== undefined) {
+            log.error(
+                `not starting the rest: an entry of preset ${quotePresetName(report.blockedBy)} failed to start — ` +
+                    `skipped: ${report.skipped.map((index) => tabs[index].name).join(', ')}`,
+            );
+        }
+
+        // Only now: until the schedule is over, every child having ended does not mean the pool
+        // has, since more are planned. Whatever was started stays ours until it ends or Ctrl-C.
         await Promise.all(runs);
 
         if (interrupted) return CANCELLED_EXIT_CODE;
