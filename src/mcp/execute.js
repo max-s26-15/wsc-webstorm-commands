@@ -108,14 +108,18 @@ export function debugConfigurationCall(configurationName) {
  * trick TERMINAL_TOOL needs), and there are no bounds to send: the plugin answers as soon as
  * the command has been typed in, never waiting for it to finish.
  *
+ * `mark` is what `wsc --stop` and `--restart` find the tab by later: the plugin keeps it on the
+ * tab, in memory, and lists it in `list_running`. A tab opened without one is invisible to them.
+ *
  * @param {string} tabName
  * @param {string} command
+ * @param {{ kind: import('./control.js').EntryKind, mode: import('../modes.js').LaunchMode, debugPort?: number }} [mark]
  * @returns {ToolCall}
  */
-export function terminalTabCall(tabName, command) {
+export function terminalTabCall(tabName, command, mark) {
     return {
         tool: TERMINAL_TAB_TOOL,
-        arguments: { tabName, command },
+        arguments: { tabName, command, ...mark },
     };
 }
 

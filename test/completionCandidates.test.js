@@ -6,6 +6,7 @@ import { complete, findProjectFlag } from '../src/completion/candidates.js';
 const catalogue = {
     presets: ['default', 'backend'],
     configs: ['web', 'api', 'api > repro:stale-job:debug', 'addon-client', 'addon-server', 'toString'],
+    entries: ['web', 'seed db', 'ngrok'],
 };
 
 /**
@@ -168,5 +169,30 @@ describe('findProjectFlag', () => {
         assert.equal(findProjectFlag(['web']), undefined);
         assert.equal(findProjectFlag(['--project']), undefined);
         assert.equal(findProjectFlag(['--', '--project', '/a']), undefined);
+    });
+});
+
+describe('complete — --stop and --restart', () => {
+    test('the flags themselves complete', () => {
+        assert.deepEqual(at('--st').values, ['--stop']);
+        assert.deepEqual(at('--res').values, ['--restart']);
+    });
+
+    test('after either one, the names offered are the presets\' entries — custom commands too', () => {
+        assert.deepEqual(at('--stop ').values, catalogue.entries);
+        assert.deepEqual(at('--restart n').values, ['ngrok']);
+    });
+
+    test('...and never a mode: the mode comes from the preset', () => {
+        assert.deepEqual(at('--restart web:').values, []);
+    });
+
+    test('a configuration in no preset is not offered: there is nothing of it to stop', () => {
+        assert.deepEqual(at('--stop a').values, []);
+    });
+
+    test('--preset still takes presets, and the run of presets goes on as for a launch', () => {
+        assert.deepEqual(at('--restart --preset ').values, catalogue.presets);
+        assert.deepEqual(at('--stop --preset backend ').values, [...catalogue.presets, ...catalogue.entries]);
     });
 });

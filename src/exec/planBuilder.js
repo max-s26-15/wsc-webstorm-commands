@@ -403,13 +403,15 @@ export function buildExecutionPlan({
      * The call behind one Terminal tab, titled `name`. With the plugin's tool it is a real
      * shell tab that the plugin titles itself; without it, the IDE's own tool, which titles a
      * tab after the MCP client that opened it — hence `tabName`, which makes the runner open
-     * a session under that name (see runExecutionPlan).
+     * a session under that name (see runExecutionPlan). Only the plugin's tab can carry `mark`,
+     * which `wsc --stop` and `--restart` find it by.
      *
      * @param {string} name
      * @param {string} command
+     * @param {Parameters<typeof terminalTabCall>[2]} mark
      */
-    const terminalCall = (name, command) =>
-        terminalTool ? terminalTabCall(name, command) : { ...terminalCommandCall(command), tabName: name };
+    const terminalCall = (name, command, mark) =>
+        terminalTool ? terminalTabCall(name, command, mark) : { ...terminalCommandCall(command), tabName: name };
 
     const calls = plan.map((entry) => {
         if (isCustomPlanEntry(entry)) {
@@ -420,7 +422,7 @@ export function buildExecutionPlan({
             const custom = {
                 name: entry.name,
                 mode: entry.mode,
-                ...terminalCall(entry.name, customCommandLine(entry.commands)),
+                ...terminalCall(entry.name, customCommandLine(entry.commands), { kind: 'custom', mode: entry.mode }),
                 commandSource: 'custom',
             };
             return custom;
@@ -442,7 +444,12 @@ export function buildExecutionPlan({
                 ? debugConfigurationCall(entry.name)
                 : built === null
                     ? runConfigurationCall(entry.name)
-                    : terminalCall(entry.name, built.command)),
+                    // The entry's own mode, not the target: --target=terminal is not part of the entry.
+                    : terminalCall(entry.name, built.command, {
+                        kind: 'config',
+                        mode: entry.mode,
+                        ...(debugPort === undefined ? {} : { debugPort }),
+                    })),
         };
 
         if (built?.source !== undefined) call.commandSource = built.source;

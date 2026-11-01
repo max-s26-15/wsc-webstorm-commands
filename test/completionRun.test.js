@@ -270,3 +270,16 @@ test('the catalogue is read from .idea/, not the current directory', async () =>
         await project.cleanup();
     }
 });
+
+test('--stop offers the entries of every preset, read from the preset file', async () => {
+    const presets = JSON.stringify({
+        presets: { default: [{ name: 'web' }], tools: [{ name: 'seed db', mode: 'terminal', commands: ['npm run seed'] }] },
+    });
+    const project = await tmpIdeaProject({ presets });
+    try {
+        const { lines } = await complete(project.dir, ['zsh', 'wsc --stop ']);
+        assert.deepEqual(lines.slice(1), ['web', 'seed db']);
+    } finally {
+        await project.cleanup();
+    }
+});

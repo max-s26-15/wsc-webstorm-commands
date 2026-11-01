@@ -11,8 +11,6 @@ import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
 import com.intellij.mcpserver.project
 import com.intellij.openapi.application.EDT
-import com.intellij.xdebugger.XDebugSession
-import com.intellij.xdebugger.XDebuggerManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -74,19 +72,9 @@ class WscDebugToolset : McpToolset {
                     "\"$configurationName\" started — check the Debug tool window",
             )
 
-        // processStarted is published BEFORE session.init(process): muting there dereferences a
-        // null debug process. Wait for the confirmed tab instead. A breakpoint can hit before this.
-        // Use sessionName for the fallback: runContentDescriptor is forbidden in split debugger mode.
-        withContext(Dispatchers.EDT) {
-            XDebuggerManager.getInstance(project).debugSessions
-                .filter { it.runProfile === settings.configuration || it.sessionName == tab }
-                .forEach(::mute)
-        }
+        // Only now, with the tab confirmed — see DebugMute for why not earlier.
+        DebugMute.muteFor(project, settings.configuration, tab)
         return "started a debug session for \"$configurationName\" with breakpoints muted (tab: $tab)"
-    }
-
-    private fun mute(session: XDebugSession) {
-        if (!session.areBreakpointsMuted()) session.setBreakpointMuted(true)
     }
 
     private fun fail(text: String) = McpExpectedError(text, JsonObject(emptyMap()))

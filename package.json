@@ -1,6 +1,6 @@
 {
   "name": "webstorm-commands",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Launch a set of WebStorm run configurations at once, each in its own Run/Debug or Terminal tab, over the IDE's MCP Server",
   "keywords": [
     "webstorm",

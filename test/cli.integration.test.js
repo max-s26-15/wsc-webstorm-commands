@@ -926,3 +926,136 @@ describe('custom commands in a preset', () => {
         assert.deepEqual(result.fellBack[0].presetEntries, [seed]);
     });
 });
+
+// ── --stop ───────────────────────────────────────────────────────────────────
+/** Every tool wsc Companion 0.6.0 lists. */
+const PLUGIN_TOOLS = ['debug_run_configuration', 'open_terminal_tab', 'list_running', 'stop_run_configuration',
+    'restart_run_configuration', 'stop_terminal_tab', 'restart_terminal_tab'];
+
+/**
+ * A fake IDE with the plugin, where `running` is what list_running answers.
+ *
+ * @param {unknown} running
+ * @param {(name: string, args: any) => unknown} [answer] - a control tool's answer
+ */
+const ideWith = (running, answer) => ({
+    tools: PLUGIN_TOOLS,
+    callTool: (/** @type {string} */ name, /** @type {any} */ args) => {
+        if (name === 'get_run_configurations') return FIXTURE;
+        if (name === 'list_running') return running;
+        return answer ? answer(name, args) : `done ${name}`;
+    },
+});
+
+const STOP_PRESETS = withPresets({
+    dev: [{ name: 'web' }, { name: 'ngrok', mode: 'terminal', commands: ['ngrok http 8000'] }],
+    docs: [{ name: 'docs' }],
+});
+
+const ALL_RUNNING = {
+    runs: [{ configurationName: 'web', mode: 'run' }, { configurationName: 'docs', mode: 'run' }],
+    terminals: [{ entryName: 'ngrok', kind: 'custom', mode: 'terminal', commandRunning: true }],
+};
+
+/** @param {{ calls: any[] }} result - the control calls the IDE received */
+const controlled = (result) => result.calls
+    .filter((call) => call.type === 'call' && !['get_run_configurations', 'list_running'].includes(call.name))
+    .map((call) => [call.name, call.args]);
+
+describe('flag table — --stop', () => {
+    test('--dry-run prints what runs, from every preset, and stops nothing', async () => {
+        const result = await wsc(['--stop', '--dry-run'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0);
+        assert.equal(result.stdout, [
+            'stop     web    Run tab',
+            'stop     ngrok  Terminal tab',
+            'stop     docs   Run tab',
+            '',
+        ].join('\n'));
+        assert.deepEqual(controlled(result), []);
+        assert.equal(result.closed, true);
+    });
+
+    test('--preset narrows it to one preset', async () => {
+        const result = await wsc(['--stop', '--preset', 'docs'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'docs', mode: 'run' }]]);
+    });
+
+    test('a name narrows it to one entry', async () => {
+        const result = await wsc(['--stop', 'ngrok'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(controlled(result), [['stop_terminal_tab', { kind: 'custom', entryName: 'ngrok' }]]);
+    });
+
+    test('an unknown preset is the launch\'s own error', async () => {
+        const result = await wsc(['--stop', '--preset', 'nope'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /unknown preset "nope" \(known presets: dev, docs\)/);
+    });
+
+    test('an IDE without the plugin is told about, not crashed on', async () => {
+        const result = await wsc(['--stop'], { config: STOP_PRESETS, deps: { tools: [] } });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /needs the wsc Companion plugin/);
+        assert.doesNotMatch(result.stderr, /\n\s+at /);
+    });
+
+    test('an answer from list_running wsc cannot read is a message, not a stack trace', async () => {
+        const result = await wsc(['--stop'], { config: STOP_PRESETS, deps: ideWith({ runs: 'all of them' }) });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, /list_running/);
+        assert.doesNotMatch(result.stderr, /\n\s+at /);
+    });
+});
+
+// ── --restart ────────────────────────────────────────────────────────────────
+describe('flag table — --restart', () => {
+    test('--dry-run prints what would restart, in place or anew, and touches nothing', async () => {
+        const config = withPresets({
+            dev: [{ name: 'web', mode: 'debug' }, { name: 'ngrok', mode: 'terminal', commands: ['ngrok http 8000'] }],
+            docs: [{ name: 'docs' }],
+        });
+        const result = await wsc(['--restart', '--dry-run'], { config, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.equal(result.stdout, [
+            'stop     web    Run tab  (preset now says debug)',
+            'restart  ngrok  Terminal tab',
+            'restart  docs   Run tab',
+            'launch   web    as debug',
+            '',
+        ].join('\n'));
+        assert.deepEqual(controlled(result), []);
+        assert.deepEqual(result.executed, []);
+    });
+
+    test('--preset and a name narrow it to one entry of one preset', async () => {
+        const result = await wsc(['--restart', '--preset', 'dev', 'web'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.deepEqual(controlled(result), [['restart_run_configuration', { configurationName: 'web', mode: 'run' }]]);
+    });
+
+    test('an entry whose preset now says debug goes through the ordinary launch', async () => {
+        const config = withPresets({ dev: [{ name: 'web', mode: 'debug' }] });
+        const result = await wsc(['--restart'], { config, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 0, result.stderr);
+        assert.deepEqual(controlled(result), [['stop_run_configuration', { configurationName: 'web', mode: 'run' }]]);
+        assert.deepEqual(launched(result), ['web:debug']);
+    });
+
+    test('a mode suffix is a usage error: the mode comes from the preset', async () => {
+        const result = await wsc(['--restart', 'web:debug'], { config: STOP_PRESETS, deps: ideWith(ALL_RUNNING) });
+
+        assert.equal(result.code, 2);
+        assert.match(result.stderr, /drop ":debug" from "web:debug"/);
+    });
+});
