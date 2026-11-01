@@ -10,15 +10,17 @@ working directory and environment. Nothing is re-implemented and nothing is gues
 It comes in two parts:
 
 - **`wsc`, a command-line tool** (Node.js). This is all you need to launch configurations.
-- **wsc Companion, a small WebStorm plugin** (`ide-plugin/`, optional but recommended). It adds two tools to the
+- **wsc Companion, a small WebStorm plugin** (`ide-plugin/`, optional but recommended). It adds tools to the
   IDE's MCP Server. One makes `wsc name:debug` open a **real Debug tab**; without it, `:debug` falls
   back to a Terminal tab with a bare Node inspector that you attach to by hand — see
-  [Debugging](#debugging-debug). The other makes every Terminal tab `wsc` opens a **real terminal**;
+  [Debugging](#debugging-debug). Another makes every Terminal tab `wsc` opens a **real terminal**;
   without it, programs that draw their own screen show nothing there — see
-  [A Terminal tab for one entry](#a-terminal-tab-for-one-entry-terminal).
+  [A Terminal tab for one entry](#a-terminal-tab-for-one-entry-terminal). The rest let `wsc --stop`
+  and `wsc --restart` **see and stop what is running**; without them those two refuse to run — see
+  [Stopping and restarting](#stopping-and-restarting---stop---restart).
 
 Every block of output below is copied from a real run against this repository's own three npm
-run configurations (`test`, `test:coverage`, `test:watch`), with WebStorm 2026.2.3 running and the
+run configurations (`test`, `test:coverage`, `test:watch`), with WebStorm 2026.2 running and the
 plugin installed — or with `--mcp-port 65001` (nothing listens there) for the "WebStorm is not
 answering" examples. Paths such as `/home/max-s26/.nvm/…` are the author's; yours will differ.
 
@@ -294,26 +296,45 @@ test:watch  debug  (preset)
 
 ## Stopping and restarting (`--stop`, `--restart`)
 
-`wsc --stop` stops what runs from your presets; `wsc --restart` restarts it, in the same tabs. Neither
-remembers what `wsc` launched: each asks the IDE what is running right now, so an entry you stopped
-by hand stays stopped, and nothing is launched twice.
+`wsc --stop` stops what runs from your presets; `wsc --restart` restarts it, in the same tabs. So there
+is no stopping every tab by hand and typing the launch again, and no duplicates from launching over
+what already runs. Neither remembers what `wsc` launched: each asks the IDE what is running right
+now, so an entry you stopped by hand stays stopped. Both need
+[wsc Companion](#3-install-wsc-companion-and-restart-the-ide) 0.6.0 or later, because the IDE's own MCP
+tools can neither list nor stop anything.
 
-- Without `--preset`, every preset counts; `--preset a b` narrows it to those. Names narrow it to single
-  entries — custom commands included, though a launch cannot name one: `wsc --restart api ngrok`.
-- An entry runs if it has a Run or Debug tab with a live process, or a Terminal tab that `wsc` opened
-  for it with a command still running inside (`wsc` presses Ctrl-C there and waits 5 seconds).
-- A restart keeps each entry where it runs — the same tab, the same mode, the same inspector port.
-  If you changed the entry's mode in `wsc -c` since, its preset wins: it is stopped where it runs and
-  launched anew. `--target=terminal` is not part of the preset, so an entry it sent to the terminal
-  restarts there.
-- The mode comes from the preset, so `wsc --restart web:debug` is refused. `--dry-run` shows what
-  would be stopped, restarted or launched, and touches nothing.
-- A named entry that is not running is already stopped for `--stop`, and an error for `--restart`,
-  which does not start what is stopped. Start a configuration in WebStorm; a custom command starts only
-  with its whole preset. (`wsc web` would also launch your default preset beside it.)
+### What they act on
 
-The blocks below were captured with these two presets launched together (`wsc --preset dev tools`);
-by then `test:coverage` had finished, so it is not running and not restarted:
+| Command | Acts on |
+| --- | --- |
+| `wsc --restart` | everything that runs from **any** preset, terminal-only presets included |
+| `wsc --restart --preset a b` | what runs from those presets |
+| `wsc --restart api ngrok` | those entries, wherever they run; custom commands can be named here, though a launch cannot name one |
+| `wsc --restart --preset dev api` | that entry, looked up in that preset only |
+
+`--stop` takes the same arguments. Names resolve the way a launch resolves them: exact, then
+case-insensitive, then a unique prefix.
+
+An entry runs if it has a Run or Debug tab with a live process, or a Terminal tab that `wsc` opened
+for it with a command still running inside.
+
+### What they do
+
+- **`--stop`** presses the Stop button of a Run or Debug tab, and Ctrl-C in a Terminal tab. The tabs stay
+  open. A command still running 5 seconds after Ctrl-C is reported, not killed, and the exit code is 1.
+- **`--restart`** keeps each entry where it runs: the same tab, the same mode, the same inspector port.
+  In a Terminal tab it presses Ctrl-C, waits, and types the command again from the project root, built from
+  the preset as it reads now. If the old command does not stop, nothing is typed, because that would start a
+  second copy. Custom commands are printed before they run again, as on a launch.
+- **A changed mode wins.** If you gave an entry another mode in `wsc -c` since it started, it is stopped where
+  it runs and launched anew. `--target=terminal` is not part of the preset, so an entry it sent to the
+  terminal restarts there.
+- **`--dry-run`** shows what would be stopped, restarted or launched, and touches nothing.
+
+### Examples
+
+The blocks below use these two presets, launched together (`wsc --preset dev tools`). By the first
+block `test:coverage` had finished, so it is not running and not restarted:
 
 ```json
 {
@@ -359,7 +380,77 @@ stopped types
 stopped 2 preset entries
 ```
 
-Both need wsc Companion 0.6.0 or later: the IDE's own MCP tools can neither list nor stop anything.
+With `test:watch` running in its Run tab and its mode changed to `debug` in the preset:
+
+```
+$ wsc --restart test:watch
+restarting 1 preset entry:
+stop     test:watch  Run tab  (preset now says debug)
+launch   test:watch  as debug
+started test:watch (debug)
+started 1 configuration(s)
+restarted 1 preset entry
+```
+
+An entry launched twice is one step, which covers all of its tabs (`×2`):
+
+```
+$ wsc --restart clock
+restarting 1 preset entry:
+restart  clock  Terminal tab ×2
+warn: custom commands from the preset:
+  clock: while true; do date; sleep 5; done
+restarted clock
+restarted 1 preset entry
+```
+
+If those tabs were debugged through the terminal on different inspector ports, one command cannot
+restart them all: `--restart` refuses before touching anything, and `--stop` still works.
+
+### When there is nothing to do
+
+Nothing running is not an error:
+
+```
+$ wsc --stop
+nothing to stop: no preset entry is running
+```
+
+A named entry that is not running is already stopped for `--stop` (exit 0), and an error for `--restart`,
+which does not start what is stopped (exit 1):
+
+```
+$ wsc --restart test:watch
+error: "test:watch" is not running — --restart only restarts what runs; start it in WebStorm
+```
+
+Start a configuration in WebStorm: `wsc test:watch` would launch your default preset beside it. A custom
+command starts only with its whole preset, and the error names that preset.
+
+### What they refuse
+
+The mode comes from the preset, so a mode suffix is a usage error. So are `--target`, `--debug-port` with
+`--stop`, and `--fallback=terminal`, which could not reach what runs in the IDE (`--fallback=retry` works).
+Each exits 2 and prints the usage text after the error:
+
+```
+$ wsc --restart test:watch:debug
+error: the mode comes from the preset; drop ":debug" from "test:watch:debug"
+```
+
+```
+$ wsc --stop --target=terminal
+error: --stop starts nothing, so --target would be ignored
+```
+
+```
+$ wsc --restart --fallback=terminal
+error: --restart acts on what runs in the IDE; --fallback=retry waits for it
+```
+
+Without the plugin, or with one older than 0.6.0, both commands stop with an error that says to install or
+update it. On Windows, a restart that would type into a Terminal tab is refused unless `WSC_POSIX_TERMINAL=1`
+is set, as on a launch (see [Windows](#windows)).
 
 ## Debugging (`:debug`)
 
@@ -630,19 +721,24 @@ name really does end in `:debug` (likewise `name:terminal:terminal` for `:termin
 
 | code | meaning |
 | --- | --- |
-| 0 | everything asked for was started (or printed) |
-| 1 | a runtime error: unknown name, unreachable IDE, a launch the IDE refused |
+| 0 | everything asked for was started, stopped or restarted (or printed), or there was nothing to stop |
+| 1 | a runtime error: unknown name, unreachable IDE, a launch the IDE refused, a stop or restart that failed |
 | 2 | a usage error: a bad flag, or flags that contradict each other |
 | 130 | Ctrl-C at an interactive prompt; nothing was written or launched |
 
 A partial launch exits 1 and names what did and did not start — launching is deliberately
-not atomic, because by then the user has already been told what is coming.
+not atomic, because by then the user has already been told what is coming. `--stop` and `--restart`
+work the same way: every entry is attempted, and the closing line names what failed.
 
 ## Troubleshooting
 
 - **`✗ debug_run_configuration` in `wsc-mcp-probe`, or the "Terminal window" warning on `:debug`.**
   The plugin is not installed, or the IDE was not restarted after installing it, or a WebStorm
   update outdated it: install the matching plugin release (installation step 3).
+- **`--stop` or `--restart` says nothing is running, but something is.** They see only what wsc Companion
+  can see — a process started before the plugin was loaded, or a Terminal tab it did not mark, is not
+  listed (see [Known limitations](#known-limitations)). Stop it by hand and start it again with `wsc`, and it
+  is visible from then on. An entry that is in no preset is not acted on either.
 - **`Streamable HTTP session not found` right after restarting WebStorm.** The MCP Server is still
   settling. Wait a few seconds and run the command again.
 - **`doesn't correspond to any open project`.** The MCP Server serves the projects open in the IDE
@@ -679,6 +775,15 @@ not atomic, because by then the user has already been told what is coming.
   opened by an older plugin, by hand, without the plugin (`execute_terminal_command`), or before the
   IDE restarted carries no mark and is left alone; so is anything the OS-terminal fallback opened.
   A command that ignores Ctrl-C is reported, not killed.
+- **A Run or Debug process started before the plugin was loaded is not listed.** wsc Companion learns
+  which configuration a process belongs to as the IDE starts it, so after installing or updating the plugin
+  without restarting the IDE, what already runs stays invisible to `--stop` and `--restart` until it is
+  started again.
+- **A marked Terminal tab stays `wsc`'s until you close it.** If you stop the entry there and run a command of
+  your own in that tab, `--stop` interrupts it and `--restart` replaces it with the preset's command.
+- **On Windows, `--restart` in a Terminal tab needs Git Bash, not WSL.** It first goes back to the project root
+  with a Windows path, which a WSL shell cannot `cd` to. The restart then does nothing, though `wsc` reports it
+  as done.
 
 ## Development
 
